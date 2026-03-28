@@ -26,7 +26,7 @@ REGION_COORDINATES: dict[str, tuple[float, float]] = {
 }
 
 
-@dataclass(slots=True)
+@dataclass
 class TinyFishAPIClient:
     """
     TinyFish-backed issue extraction with a local heuristic fallback.

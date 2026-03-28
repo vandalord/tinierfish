@@ -142,7 +142,27 @@ function updateRuntimeBadges(runtime, sourceMode) {
   refreshBadge.textContent = labelizeRefreshStatus(refreshStatus);
 }
 
-function renderLiveHealth(runtime) {
+function renderLiveHealth(runtime, payload = null) {
+  const recommendationMetadata = payload?.recommendation_batch?.metadata || {};
+  const liveRecommendationCount = recommendationMetadata.live_recommendation_count ?? null;
+  const fallbackRecommendationCount = recommendationMetadata.fallback_recommendation_count ?? null;
+  const recommendationErrors = recommendationMetadata.live_errors || [];
+
+  const recommendationStatusMarkup =
+    liveRecommendationCount === null && fallbackRecommendationCount === null
+      ? ""
+      : `
+        <div class="health-item">
+          <span class="health-label">Recommendation engine</span>
+          <div class="detail-copy">${
+            liveRecommendationCount > 0 ? "TinyFish live recommendations active." : "Fallback supplier catalog in use."
+          }</div>
+          <div class="detail-copy">Live recommendations: ${liveRecommendationCount || 0}</div>
+          <div class="detail-copy">Fallback recommendations: ${fallbackRecommendationCount || 0}</div>
+          <div class="detail-copy">${recommendationErrors[0] || "No recommendation engine errors recorded."}</div>
+        </div>
+      `;
+
   liveHealthPanel.innerHTML = `
     <div class="health-item">
       <span class="health-label">Last live success</span>
@@ -154,6 +174,7 @@ function renderLiveHealth(runtime) {
       <div class="detail-copy">${formatMaybeDate(runtime?.last_live_error_at)}</div>
       <div class="detail-copy">${runtime?.last_live_error || "No recorded live errors."}</div>
     </div>
+    ${recommendationStatusMarkup}
   `;
 }
 
@@ -303,7 +324,7 @@ async function loadDashboard({ refresh = false } = {}) {
   renderIssueCards(features);
   drawMap(features);
   updateRuntimeBadges(payload.runtime, payload.source_mode);
-  renderLiveHealth(payload.runtime);
+  renderLiveHealth(payload.runtime, payload);
   statusText.textContent = `Live batch ${payload.batch_root} updated ${new Date(payload.generated_at).toLocaleString()}`;
 
   if (features.length) {
@@ -328,7 +349,7 @@ async function waitForRefresh() {
     const response = await fetch("/api/status", { cache: "no-store" });
     const payload = await response.json();
     updateRuntimeBadges(payload.refresh, payload.refresh.last_source_mode || dashboardState?.source_mode || "unknown");
-    renderLiveHealth(payload.refresh);
+    renderLiveHealth(payload.refresh, dashboardState);
 
     if (payload.refresh.status === "idle") {
       if (payload.refresh.last_error) {
