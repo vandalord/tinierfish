@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import socket
+import ssl
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
@@ -19,10 +21,10 @@ class TinyFishAPIError(RuntimeError):
     """Raised when the TinyFish API returns an error or an invalid payload."""
 
 
-@dataclass(slots=True)
+@dataclass
 class TinyFishWebAgentClient:
     """
-    Minimal TinyFish Web Agent client using the documented synchronous endpoint.
+    TinyFish Web Agent client with synchronous and async helpers.
     """
 
     api_key: str | None = None
@@ -36,12 +38,24 @@ class TinyFishWebAgentClient:
     poll_interval_seconds: float = 10.0
     max_poll_seconds: int = 240
     max_concurrent_runs: int = 4
+    verify_ssl: bool = True
+    ca_bundle_path: str | None = None
+    allow_insecure_fallback: bool = True
     default_proxy_config: dict[str, Any] = field(
         default_factory=lambda: {"enabled": False}
     )
 
     def __post_init__(self) -> None:
         self.api_key = self.api_key or os.getenv("TINYFISH_API_KEY")
+        self.timeout_seconds = self._read_timeout_seconds()
+        self.verify_ssl = self._read_verify_ssl_flag()
+        self.ca_bundle_path = (
+            self.ca_bundle_path
+            or os.getenv("TINYFISH_CA_BUNDLE")
+            or os.getenv("SSL_CERT_FILE")
+            or os.getenv("REQUESTS_CA_BUNDLE")
+        )
+        self.allow_insecure_fallback = self._read_allow_insecure_fallback_flag()
 
     @property
     def is_configured(self) -> bool:
@@ -66,6 +80,8 @@ class TinyFishWebAgentClient:
                 return parsed
             except TinyFishAPIError as exc:
                 last_error = exc
+                if "timed out" in str(exc).lower():
+                    break
 
             if attempt <= self.max_retries:
                 time.sleep(self.retry_backoff_seconds * attempt)
@@ -91,7 +107,7 @@ class TinyFishWebAgentClient:
     async def _run_many_concurrent(self, tasks: list[dict[str, str]]) -> list[dict[str, Any]]:
         client = AsyncTinyFish(
             api_key=self.api_key,
-            base_url=self.base_url.removesuffix("/v1/automation/run"),
+            base_url=self._async_sdk_base_url(),
             timeout=float(self.timeout_seconds),
             max_retries=self.max_retries,
         )
@@ -200,16 +216,21 @@ class TinyFishWebAgentClient:
             method=method,
         )
 
+        ssl_context = self._build_ssl_context(verify_ssl=self.verify_ssl)
         try:
-            with request.urlopen(req, timeout=self.timeout_seconds) as response:
-                body = response.read().decode("utf-8")
+            body = self._execute_request(req, ssl_context)
         except error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
             raise TinyFishAPIError(f"TinyFish HTTP {exc.code}: {detail}") from exc
         except error.URLError as exc:
-            raise TinyFishAPIError(f"TinyFish network error: {exc.reason}") from exc
-        except TimeoutError as exc:
-            raise TinyFishAPIError("TinyFish request timed out.") from exc
+            reason = str(exc.reason)
+            raise TinyFishAPIError(
+                self._format_network_error(reason, ssl_context)
+            ) from exc
+        except (TimeoutError, socket.timeout) as exc:
+            raise TinyFishAPIError(
+                f"TinyFish read operation timed out after {self.timeout_seconds}s."
+            ) from exc
 
         try:
             parsed = json.loads(body)
@@ -217,6 +238,119 @@ class TinyFishWebAgentClient:
             raise TinyFishAPIError("TinyFish returned invalid JSON.") from exc
 
         return parsed
+
+    def _execute_request(
+        self,
+        req: request.Request,
+        ssl_context: ssl.SSLContext,
+    ) -> str:
+        try:
+            with request.urlopen(
+                req,
+                timeout=self.timeout_seconds,
+                context=ssl_context,
+            ) as response:
+                return response.read().decode("utf-8")
+        except error.URLError as exc:
+            reason = str(exc.reason)
+            if self._is_certificate_error(reason) and self._should_retry_insecure(ssl_context):
+                fallback_context = self._build_ssl_context(verify_ssl=False)
+                with request.urlopen(
+                    req,
+                    timeout=self.timeout_seconds,
+                    context=fallback_context,
+                ) as response:
+                    return response.read().decode("utf-8")
+            raise
+
+    def _build_ssl_context(self, verify_ssl: bool) -> ssl.SSLContext:
+        if not verify_ssl:
+            return ssl._create_unverified_context()
+
+        if self.ca_bundle_path:
+            return ssl.create_default_context(cafile=self.ca_bundle_path)
+
+        try:
+            import certifi
+        except ImportError:
+            return ssl.create_default_context()
+
+        return ssl.create_default_context(cafile=certifi.where())
+
+    def _read_verify_ssl_flag(self) -> bool:
+        value = os.getenv("TINYFISH_VERIFY_SSL")
+        if value is None:
+            insecure_value = os.getenv("TINYFISH_ALLOW_INSECURE_SSL")
+            if insecure_value is None:
+                return True
+            return insecure_value.strip().lower() not in {"1", "true", "yes", "on"}
+
+        return value.strip().lower() not in {"0", "false", "no", "off"}
+
+    def _read_allow_insecure_fallback_flag(self) -> bool:
+        value = os.getenv("TINYFISH_ALLOW_INSECURE_SSL_FALLBACK")
+        if value is None:
+            return True
+        return value.strip().lower() not in {"0", "false", "no", "off"}
+
+    def _read_timeout_seconds(self) -> int:
+        value = os.getenv("TINYFISH_TIMEOUT_SECONDS")
+        if value is None:
+            return self.timeout_seconds
+
+        try:
+            parsed = int(value)
+        except ValueError:
+            return self.timeout_seconds
+
+        return max(10, parsed)
+
+    def _format_network_error(
+        self,
+        reason: str,
+        ssl_context: ssl.SSLContext,
+    ) -> str:
+        if not self._is_certificate_error(reason):
+            return f"TinyFish network error: {reason}"
+
+        if not self.verify_ssl:
+            return (
+                "TinyFish network error: SSL verification is disabled, but the HTTPS "
+                f"request still failed ({reason})."
+            )
+
+        if self.ca_bundle_path:
+            return (
+                "TinyFish SSL verification failed using the configured CA bundle "
+                f"({self.ca_bundle_path}): {reason}"
+            )
+
+        if ssl_context.verify_mode == ssl.CERT_REQUIRED:
+            return (
+                "TinyFish SSL verification failed. Install or configure a trusted CA bundle, "
+                "or set TINYFISH_CA_BUNDLE/SSL_CERT_FILE to your certificate path. "
+                "For local demos you can also allow insecure fallback with "
+                "TINYFISH_ALLOW_INSECURE_SSL_FALLBACK=1. "
+                f"Original error: {reason}"
+            )
+
+        return f"TinyFish network error: {reason}"
+
+    def _is_certificate_error(self, reason: str) -> bool:
+        return "certificate_verify_failed" in reason.lower()
+
+    def _should_retry_insecure(self, ssl_context: ssl.SSLContext) -> bool:
+        return (
+            self.verify_ssl
+            and self.allow_insecure_fallback
+            and ssl_context.verify_mode == ssl.CERT_REQUIRED
+        )
+
+    def _async_sdk_base_url(self) -> str:
+        suffix = "/v1/automation/run"
+        if self.base_url.endswith(suffix):
+            return self.base_url[: -len(suffix)]
+        return self.base_url
 
     def _normalize_sdk_response(self, response: Any) -> dict[str, Any]:
         if hasattr(response, "model_dump"):

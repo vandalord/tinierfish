@@ -12,7 +12,6 @@ from agents.shared.models import (
     SourceBatch,
 )
 from agents.shared.tinyfish import TinyFishAPIError, TinyFishWebAgentClient
-from tinyfish import AsyncTinyFish
 
 
 REGION_COORDINATES: dict[str, tuple[float, float]] = {
@@ -326,7 +325,7 @@ class IssueExtractionAgent:
         try:
             responses = self.tinyfish_client.web_client.run_many_concurrent(tasks)
         except TinyFishAPIError:
-            return {}, True
+            return {}, False
 
         payloads: dict[str, dict[str, object]] = {}
         for source, response in zip(source_batch.sources, responses):

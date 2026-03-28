@@ -5,6 +5,7 @@ import json
 import os
 import threading
 import time
+import traceback
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from http import HTTPStatus
@@ -19,10 +20,17 @@ ROOT = Path(__file__).resolve().parent
 PROJECT_ROOT = ROOT.parent
 STATIC_DIR = ROOT / "static"
 OUTPUTS_DIR = PROJECT_ROOT / "outputs"
+REFRESH_LOG_PATH = OUTPUTS_DIR / "refresh.log"
 
 
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def append_refresh_log(message: str) -> None:
+    OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+    with REFRESH_LOG_PATH.open("a", encoding="utf-8") as handle:
+        handle.write(f"[{utc_now_iso()}] {message}\n")
 
 
 def read_cached_dashboard_payload() -> dict[str, object] | None:
@@ -203,6 +211,7 @@ class DashboardRuntime:
             self.refresh.status = "refreshing"
             self.refresh.last_started_at = utc_now_iso()
             self.refresh.last_error = None
+            append_refresh_log(f"refresh queued: reason={reason}")
 
             thread = threading.Thread(
                 target=self._run_refresh,
@@ -219,9 +228,12 @@ class DashboardRuntime:
             }
 
     def _run_refresh(self, reason: str) -> None:
+        append_refresh_log(f"refresh started: reason={reason}")
         try:
             payload = run_dashboard_refresh()
         except Exception as exc:  # noqa: BLE001
+            append_refresh_log(f"refresh failed: {exc}")
+            append_refresh_log(traceback.format_exc().rstrip())
             with self.lock:
                 self.refresh.status = "error"
                 self.refresh.last_error = str(exc)
@@ -248,6 +260,12 @@ class DashboardRuntime:
             self.refresh.last_live_error = live_error
         if increment_run_count:
             self.refresh.run_count += 1
+        append_refresh_log(
+            "refresh completed: "
+            f"source_mode={payload.get('source_mode')} "
+            f"issues={payload.get('issue_batch', {}).get('metadata', {}).get('issue_count')} "
+            f"recommendations={payload.get('recommendation_batch', {}).get('metadata', {}).get('recommendation_count')}"
+        )
 
     def initialize_from_cache(self) -> None:
         cached_payload = read_cached_dashboard_payload()

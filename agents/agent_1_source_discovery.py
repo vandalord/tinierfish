@@ -69,8 +69,9 @@ class SourceDiscoveryConfig:
         "drought",
     )
     batch_frequency: str = "hourly"
-    max_articles_per_source: int = 4
-    max_live_seed_attempts: int = 8
+    max_articles_per_source: int = 5
+    max_total_live_articles: int = 5
+    max_live_seed_attempts: int = 3
     source_seeds: tuple[SourceSeed, ...] = (
         SourceSeed(
             url="https://www.channelnewsasia.com/asia",
@@ -80,7 +81,8 @@ class SourceDiscoveryConfig:
                 "Extract up to 5 recent article links from this page that are about "
                 "supply chain disruption, logistics delays, food imports, weather damage, "
                 "port congestion, shipping disruption, strikes, or agricultural shortages "
-                "relevant to Singapore or Southeast Asia. Respond only as JSON with "
+                "relevant to Singapore or Southeast Asia. Only return live article URLs that are "
+                "direct news story pages, not category pages, tag pages, or expired links. Respond only as JSON with "
                 '{"articles":[{"url":"","title":"","summary":"","region":""}]}.'
             ),
         ),
@@ -92,7 +94,8 @@ class SourceDiscoveryConfig:
                 "Extract up to 5 recent Reuters article links from this page about "
                 "food supply, logistics disruptions, weather shocks, port issues, freight, "
                 "or trade disruptions relevant to Asia or Singapore. Respond only as JSON "
-                'with {"articles":[{"url":"","title":"","summary":"","region":""}]}.'
+                'with {"articles":[{"url":"","title":"","summary":"","region":""}]}. '
+                "Only include live article pages that should open directly."
             ),
         ),
         SourceSeed(
@@ -134,7 +137,8 @@ class SourceDiscoveryConfig:
                 "Extract up to 5 recent article links from this page specifically about "
                 "port congestion, shipping delays, strikes, route disruption, or cargo risk "
                 "that could affect food or container supply chains in Asia. Respond only as JSON "
-                'with {"articles":[{"url":"","title":"","summary":"","region":""}]}.'
+                'with {"articles":[{"url":"","title":"","summary":"","region":""}]}. '
+                "Only include direct live article pages."
             ),
         ),
         SourceSeed(
@@ -145,7 +149,8 @@ class SourceDiscoveryConfig:
                 "Extract up to 5 recent article links from this page about maritime logistics, "
                 "port disruption, vessel congestion, weather impacts, or trade routes affecting "
                 "Asia. Respond only as JSON with "
-                '{"articles":[{"url":"","title":"","summary":"","region":""}]}.'
+                '{"articles":[{"url":"","title":"","summary":"","region":""}]}. '
+                "Only include direct live article pages."
             ),
         ),
         SourceSeed(
@@ -305,9 +310,24 @@ class SourceDiscoveryAgent:
         )
         live_errors: list[str] = []
         if self.tinyfish_client.is_configured:
-            collected = self._collect_live_candidates_async(
-                self.config.source_seeds[:max_seed_attempts]
-            )
+            collected: list[dict[str, str]] = []
+            seen_urls: set[str] = set()
+            for seed in self.config.source_seeds[:max_seed_attempts]:
+                try:
+                    result = self.tinyfish_client.extract_json(seed.url, seed.goal)
+                except TinyFishAPIError as exc:
+                    live_errors.append(f"{seed.publisher}: {exc}")
+                    continue
+                for article in self._normalize_tinyfish_articles(seed, result):
+                    url = article["url"]
+                    if url in seen_urls:
+                        continue
+                    seen_urls.add(url)
+                    collected.append(article)
+                    if len(collected) >= self.config.max_total_live_articles:
+                        break
+                if len(collected) >= self.config.max_total_live_articles:
+                    break
 
             if collected:
                 return collected, "tinyfish_web", live_errors
@@ -316,28 +336,6 @@ class SourceDiscoveryAgent:
             live_errors.append("TinyFish source discovery skipped because TINYFISH_API_KEY is not configured.")
 
         return self._fallback_candidates(), "fallback_demo", live_errors
-
-    def _collect_live_candidates_async(
-        self,
-        seeds: tuple[SourceSeed, ...] | list[SourceSeed],
-    ) -> list[dict[str, str]]:
-        tasks = [{"url": seed.url, "goal": seed.goal} for seed in seeds]
-        if not tasks:
-            return []
-
-        try:
-            responses = self.tinyfish_client.run_many_concurrent(tasks)
-        except TinyFishAPIError:
-            return []
-
-        collected: list[dict[str, str]] = []
-        for seed, response in zip(seeds, responses):
-            result = response.get("result") or response.get("resultJson")
-            if response.get("status") != "COMPLETED" or not isinstance(result, dict):
-                continue
-            collected.extend(self._normalize_tinyfish_articles(seed, result))
-
-        return collected
 
     def _normalize_tinyfish_articles(
         self,
@@ -367,6 +365,7 @@ class SourceDiscoveryAgent:
                     "publisher": seed.publisher,
                     "summary": summary,
                     "region": region,
+                    "discovery_mode": "tinyfish",
                 }
             )
 
@@ -380,6 +379,7 @@ class SourceDiscoveryAgent:
                 "publisher": "Reuters",
                 "summary": "Flooding disrupted farms and trucking routes, raising concerns over vegetable shortages and logistics delays.",
                 "region": "Malaysia",
+                "discovery_mode": "fallback",
             },
             {
                 "url": "https://www.channelnewsasia.com/asia/port-strike-thailand-freight-delay-food-imports-2026",
@@ -387,6 +387,7 @@ class SourceDiscoveryAgent:
                 "publisher": "Channel NewsAsia",
                 "summary": "A port strike and vessel backlog are delaying produce and seafood shipments around Southeast Asia.",
                 "region": "Thailand",
+                "discovery_mode": "fallback",
             },
             {
                 "url": "https://www.straitstimes.com/asia/australian-heatwave-risks-fruit-harvests-for-exporters",
@@ -394,6 +395,7 @@ class SourceDiscoveryAgent:
                 "publisher": "The Straits Times",
                 "summary": "A severe heatwave is stressing fruit harvests and cold-chain planning for importers across Asia.",
                 "region": "Australia",
+                "discovery_mode": "fallback",
             },
         ]
 
@@ -415,8 +417,12 @@ class SourceDiscoveryAgent:
         if domain not in self.config.allowed_domains:
             return False
 
+        if candidate.get("discovery_mode") == "tinyfish":
+            return True
+
         searchable_text = " ".join((title, summary))
         return any(term in searchable_text for term in self.config.supply_chain_terms)
+
 
     def _score_candidate(self, candidate: dict[str, str]) -> float:
         text = " ".join(
