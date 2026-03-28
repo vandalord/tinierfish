@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from math import asin, cos, radians, sin, sqrt
-import os
+from agents.shared.models import IssueBatch, Recommendation, RecommendationBatch, SupplierOption
+from agents.shared.models import IssueRecord, RiskType
 
 from agents.shared.models import IssueBatch, IssueRecord, Recommendation, RecommendationBatch, SupplierOption
 from agents.shared.tinyfish import TinyFishAPIError, TinyFishWebAgentClient
@@ -123,7 +122,109 @@ DEFAULT_SUPPLIERS = [
         reliability_score=0.86,
         active_risk_tags=[],
     ),
+    SupplierOption(
+        supplier_id="SUP-005",
+        supplier_name="Batam Cold Chain Hub",
+        country="Indonesia",
+        latitude=1.0456,
+        longitude=104.0305,
+        products=["seafood", "mixed food supply", "general cargo"],
+        average_cost_index=1.03,
+        reliability_score=0.87,
+        active_risk_tags=[],
+    ),
+    SupplierOption(
+        supplier_id="SUP-006",
+        supplier_name="Penang Staples Exchange",
+        country="Malaysia",
+        latitude=5.4164,
+        longitude=100.3327,
+        products=["rice", "grain", "egg", "mixed food supply", "container capacity"],
+        average_cost_index=1.01,
+        reliability_score=0.89,
+        active_risk_tags=[],
+    ),
+    SupplierOption(
+        supplier_id="SUP-007",
+        supplier_name="Cebu Marine Foods Cluster",
+        country="Philippines",
+        latitude=10.3157,
+        longitude=123.8854,
+        products=["seafood", "mixed food supply", "general cargo"],
+        average_cost_index=1.08,
+        reliability_score=0.9,
+        active_risk_tags=[],
+    ),
+    SupplierOption(
+        supplier_id="SUP-008",
+        supplier_name="Colombo Rerouting Logistics Hub",
+        country="Sri Lanka",
+        latitude=6.9271,
+        longitude=79.8612,
+        products=["general cargo", "container capacity", "mixed food supply"],
+        average_cost_index=1.07,
+        reliability_score=0.93,
+        active_risk_tags=[],
+    ),
+    SupplierOption(
+        supplier_id="SUP-009",
+        supplier_name="Adelaide Fresh Produce Reserve",
+        country="Australia",
+        latitude=-34.9285,
+        longitude=138.6007,
+        products=["vegetable", "fruit", "mixed food supply"],
+        average_cost_index=1.16,
+        reliability_score=0.92,
+        active_risk_tags=[],
+    ),
+    SupplierOption(
+        supplier_id="SUP-010",
+        supplier_name="Johor Fuel Bunkering Reserve",
+        country="Malaysia",
+        latitude=1.4655,
+        longitude=103.7578,
+        products=["petrol", "diesel", "jet fuel", "fuel security", "energy logistics"],
+        average_cost_index=1.05,
+        reliability_score=0.91,
+        active_risk_tags=[],
+    ),
+    SupplierOption(
+        supplier_id="SUP-011",
+        supplier_name="Chennai Refined Fuels Terminal",
+        country="India",
+        latitude=13.0827,
+        longitude=80.2707,
+        products=["petrol", "diesel", "jet fuel", "fuel security", "energy logistics"],
+        average_cost_index=1.09,
+        reliability_score=0.93,
+        active_risk_tags=[],
+    ),
 ]
+
+PRODUCT_ALIASES: dict[str, list[str]] = {
+    "mixed food supply": [
+        "mixed food supply",
+        "vegetable",
+        "fruit",
+        "rice",
+        "egg",
+        "seafood",
+        "poultry",
+        "grain",
+        "general cargo",
+        "container capacity",
+    ],
+    "food imports": ["mixed food supply", "general cargo", "container capacity"],
+    "logistics": ["general cargo", "container capacity", "mixed food supply"],
+    "freight": ["general cargo", "container capacity", "mixed food supply"],
+    "shipping": ["general cargo", "container capacity", "mixed food supply"],
+    "transport": ["general cargo", "container capacity", "mixed food supply"],
+    "produce": ["vegetable", "fruit", "mixed food supply"],
+    "grain": ["grain", "rice", "mixed food supply"],
+    "fuel security": ["petrol", "diesel", "jet fuel", "fuel security", "energy logistics"],
+    "containerized trade": ["general cargo", "container capacity", "mixed food supply"],
+    "global maritime cargo": ["general cargo", "container capacity", "mixed food supply"],
+}
 
 
 @dataclass
@@ -320,29 +421,80 @@ class AlternativeSourcingAgent:
 
     def run(self, batch_id: str, issue_batch: IssueBatch) -> RecommendationBatch:
         recommendations: list[Recommendation] = []
-        issues_without_matches: list[str] = []
-        live_errors: list[str] = []
-        live_recommendation_count = 0
-        fallback_recommendation_count = 0
+        seen_recommendations: set[tuple[str, str, str]] = set()
 
         for issue in issue_batch.issues:
-            live_payload = self.live_client.recommend(issue)
-            if live_payload.get("live_error"):
-                live_errors.append(str(live_payload["live_error"]))
+            issue_start_count = len(recommendations)
+            for product in self._candidate_products(issue):
+                cheapest = self._pick_best_supplier(issue.region, product, strategy="cheapest")
+                if cheapest is None:
+                    continue
 
-            live_recommendations = list(live_payload.get("recommendations", []))
-            if live_recommendations:
-                recommendations.extend(live_recommendations)
-                live_recommendation_count += len(live_recommendations)
-                continue
+                cheapest_key = (issue.issue_id, "first_cheapest", cheapest.supplier_id)
+                if cheapest_key not in seen_recommendations:
+                    seen_recommendations.add(cheapest_key)
+                    recommendations.append(
+                        Recommendation(
+                            issue_id=issue.issue_id,
+                            strategy="first_cheapest",
+                            product=product,
+                            recommended_supplier=cheapest,
+                            rationale=(
+                                f"{cheapest.supplier_name} can cover the {product} category "
+                                f"without relying on the affected region ({issue.region})."
+                            ),
+                            estimated_cost_delta_pct=round((cheapest.average_cost_index - 1.0) * 100, 2),
+                            security_score=self._security_score(cheapest),
+                        )
+                    )
 
-            issue_recommendations = self._build_fallback_recommendations(issue)
-            if not issue_recommendations:
-                issues_without_matches.append(issue.issue_id)
-                continue
+                secure = self._pick_best_supplier(issue.region, product, strategy="secure")
+                if secure is None or secure.supplier_id == cheapest.supplier_id:
+                    continue
 
-            recommendations.extend(issue_recommendations)
-            fallback_recommendation_count += len(issue_recommendations)
+                secure_key = (issue.issue_id, "first_secure", secure.supplier_id)
+                if secure_key in seen_recommendations:
+                    continue
+                seen_recommendations.add(secure_key)
+                recommendations.append(
+                    Recommendation(
+                        issue_id=issue.issue_id,
+                        strategy="first_secure",
+                        product=product,
+                        recommended_supplier=secure,
+                        rationale=(
+                            f"{secure.supplier_name} is outside the affected region "
+                            f"and offers the strongest resilience score for {product}."
+                        ),
+                        estimated_cost_delta_pct=round((secure.average_cost_index - 1.0) * 100, 2),
+                        security_score=self._security_score(secure),
+                    )
+                )
+
+            if len(recommendations) == issue_start_count:
+                for product in self._fallback_products(issue):
+                    cheapest = self._pick_best_supplier(issue.region, product, strategy="cheapest")
+                    if cheapest is None:
+                        continue
+
+                    cheapest_key = (issue.issue_id, "first_cheapest", cheapest.supplier_id)
+                    if cheapest_key not in seen_recommendations:
+                        seen_recommendations.add(cheapest_key)
+                        recommendations.append(
+                            Recommendation(
+                                issue_id=issue.issue_id,
+                                strategy="first_cheapest",
+                                product=product,
+                                recommended_supplier=cheapest,
+                                rationale=(
+                                    f"{cheapest.supplier_name} is a broad fallback for {product} "
+                                    f"when the disruption affects cross-border supply resilience."
+                                ),
+                                estimated_cost_delta_pct=round((cheapest.average_cost_index - 1.0) * 100, 2),
+                                security_score=self._security_score(cheapest),
+                            )
+                        )
+                    break
 
         return RecommendationBatch(
             batch_id=batch_id,
@@ -430,39 +582,12 @@ class AlternativeSourcingAgent:
         product: str,
         strategy: str,
     ) -> SupplierOption | None:
-        candidates = self._candidate_suppliers(issue, product)
-        if not candidates:
-            return None
-
-        if strategy == "cheapest":
-            return min(
-                candidates,
-                key=lambda supplier: (
-                    supplier.average_cost_index,
-                    self._distance_km(issue.latitude, issue.longitude, supplier.latitude, supplier.longitude),
-                    -self._security_score(supplier),
-                ),
-            )
-
-        return max(
-            candidates,
-            key=lambda supplier: (
-                self._security_score(supplier),
-                -self._distance_km(issue.latitude, issue.longitude, supplier.latitude, supplier.longitude),
-                -supplier.average_cost_index,
-            ),
-        )
-
-    def _candidate_suppliers(self, issue: IssueRecord, product: str) -> list[SupplierOption]:
-        requested_product = self._normalize_product(product)
-        issue_risk_tags = self._issue_risk_tags(issue)
-        blocked_countries = self.live_client._blocked_countries(issue)
-
+        matching_products = PRODUCT_ALIASES.get(product, [product])
         valid_suppliers = [
             supplier
             for supplier in self.supplier_catalog
-            if supplier.country not in blocked_countries
-            and not issue_risk_tags.intersection(self._normalize_risk_tags(supplier.active_risk_tags))
+            if supplier.country != affected_region
+            and any(match in supplier.products for match in matching_products)
         ]
 
         if requested_product == "mixed food supply":
@@ -541,24 +666,36 @@ class AlternativeSourcingAgent:
         penalty = 0.08 * len(self._normalize_risk_tags(supplier.active_risk_tags))
         return round(max(0.0, supplier.reliability_score - penalty), 3)
 
-    def _distance_km(
-        self,
-        latitude_a: float,
-        longitude_a: float,
-        latitude_b: float,
-        longitude_b: float,
-    ) -> float:
-        radius_km = 6371.0
-        lat1 = radians(latitude_a)
-        lon1 = radians(longitude_a)
-        lat2 = radians(latitude_b)
-        lon2 = radians(longitude_b)
+    def _candidate_products(self, issue: IssueRecord) -> list[str]:
+        candidates: list[str] = []
 
-        delta_lat = lat2 - lat1
-        delta_lon = lon2 - lon1
+        for product in issue.extraction.affected_products:
+            if product not in candidates:
+                candidates.append(product)
 
-        haversine_value = (
-            sin(delta_lat / 2) ** 2
-            + cos(lat1) * cos(lat2) * sin(delta_lon / 2) ** 2
-        )
-        return 2 * radius_km * asin(sqrt(haversine_value))
+        searchable_text = " ".join(
+            [issue.title, *issue.extraction.keywords, *issue.extraction.affected_products]
+        ).lower()
+        for alias in PRODUCT_ALIASES:
+            if alias in searchable_text and alias not in candidates:
+                candidates.append(alias)
+
+        if issue.extraction.risk_type in {RiskType.PORT_DISRUPTION, RiskType.STRIKE}:
+            for product in ("general cargo", "container capacity", "mixed food supply"):
+                if product not in candidates:
+                    candidates.append(product)
+
+        if "fuel" in searchable_text and "fuel security" not in candidates:
+            candidates.append("fuel security")
+
+        if not candidates:
+            candidates.append("mixed food supply")
+
+        return candidates[:3]
+
+    def _fallback_products(self, issue: IssueRecord) -> list[str]:
+        searchable_text = " ".join([issue.title, issue.extraction.narrative]).lower()
+        fallback_products = ["mixed food supply", "general cargo", "container capacity"]
+        if "fuel" in searchable_text or "airline" in searchable_text:
+            fallback_products.insert(0, "fuel security")
+        return fallback_products

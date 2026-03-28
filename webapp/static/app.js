@@ -2,7 +2,7 @@ const statusText = document.getElementById("status-text");
 const refreshButton = document.getElementById("refresh-button");
 const sourceBadge = document.getElementById("source-badge");
 const refreshBadge = document.getElementById("refresh-badge");
-const mapSvg = document.getElementById("map-svg");
+const mapCanvas = document.getElementById("map-canvas");
 const issuesList = document.getElementById("issues-list");
 const selectionPanel = document.getElementById("selection-panel");
 const timelinePanel = document.getElementById("timeline-panel");
@@ -13,23 +13,10 @@ const metricRecommendations = document.getElementById("metric-recommendations");
 const metricCritical = document.getElementById("metric-critical");
 const metricSources = document.getElementById("metric-sources");
 
-const viewBounds = {
-  minLon: 90,
-  maxLon: 150,
-  minLat: -35,
-  maxLat: 25,
-};
-
 let dashboardState = null;
 let statusPollHandle = null;
-
-function projectPoint(latitude, longitude) {
-  const width = 1000;
-  const height = 640;
-  const x = ((longitude - viewBounds.minLon) / (viewBounds.maxLon - viewBounds.minLon)) * width;
-  const y = height - ((latitude - viewBounds.minLat) / (viewBounds.maxLat - viewBounds.minLat)) * height;
-  return { x, y };
-}
+let issueMap = null;
+let issueLayer = null;
 
 function severityClass(severity) {
   return severity === "critical" || severity === "high" ? "alert" : "safe";
@@ -73,10 +60,12 @@ function renderSelection(feature) {
     <h2 class="detail-title">${props.title}</h2>
     ${buildSourceMarkup(props.source_publisher, props.source_url)}
     <p class="detail-copy">${props.region} is flagged for a ${props.risk_type.replaceAll("_", " ")} event with ${props.severity} severity.</p>
+    <p class="detail-copy">${props.narrative || "No extracted narrative available."}</p>
     <div class="tag-row">
       ${props.products.map((product) => `<span class="pill">${product}</span>`).join("")}
       ${signals.map((signal) => `<span class="pill ${severityClass(props.severity)}">${signal}</span>`).join("")}
     </div>
+    <p><a class="detail-link" href="${props.source_url}" target="_blank" rel="noreferrer">Read article</a></p>
     ${buildRecommendationMarkup(props.recommendations)}
   `;
 }
@@ -200,6 +189,11 @@ function renderIssueCards(features) {
             ${buildSourceMarkup(feature.properties.source_publisher, feature.properties.source_url)}
             <p class="issue-meta">Products: ${feature.properties.products.join(", ")}</p>
             <p class="issue-meta">Signals: ${feature.properties.negative_signals.join(", ") || "monitoring"}</p>
+          </button>
+          <div class="issue-actions">
+            <span class="issue-meta">${feature.properties.recommendations.length} recommendations</span>
+            <a class="issue-link" href="${feature.properties.source_url}" target="_blank" rel="noreferrer">Open article</a>
+          </div>
         </article>
       `,
     )
@@ -217,91 +211,89 @@ function renderIssueCards(features) {
 }
 
 function drawMap(features) {
-  const backdrop = `
-    <defs>
-      <filter id="glow">
-        <feGaussianBlur stdDeviation="8" result="blur"></feGaussianBlur>
-        <feMerge>
-          <feMergeNode in="blur"></feMergeNode>
-          <feMergeNode in="SourceGraphic"></feMergeNode>
-        </feMerge>
-      </filter>
-    </defs>
-    <rect x="0" y="0" width="1000" height="640" fill="transparent"></rect>
-    <path d="M78 90C168 56 272 90 320 150C388 240 448 250 504 218C566 182 628 174 714 188C796 200 874 246 930 288L930 620L0 620L0 150C20 124 46 104 78 90Z" fill="rgba(239, 228, 196, 0.7)"></path>
-    <path d="M572 84C650 56 744 70 844 134C920 182 972 242 1000 284L1000 0L548 0C548 20 552 46 572 84Z" fill="rgba(239, 228, 196, 0.62)"></path>
-    <text x="596" y="160" class="map-label">South China Sea</text>
-    <text x="454" y="338" class="map-label">Singapore</text>
-    <text x="330" y="260" class="map-label">Malaysia</text>
-    <text x="404" y="222" class="map-label">Thailand</text>
-    <text x="622" y="252" class="map-label">Vietnam</text>
-    <text x="706" y="468" class="map-label">Indonesia</text>
-    <text x="834" y="574" class="map-label">Australia</text>
-  `;
+  if (!window.L) {
+    mapCanvas.innerHTML = `<div class="detail-copy" style="padding: 24px;">Map library failed to load.</div>`;
+    return;
+  }
 
-  mapSvg.innerHTML = backdrop;
+  if (!issueMap) {
+    issueMap = window.L.map(mapCanvas, {
+      zoomControl: true,
+      scrollWheelZoom: false,
+    }).setView([4.5, 108], 4);
 
-  const singaporePoint = projectPoint(1.3521, 103.8198);
-  const singaporeRing = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-  singaporeRing.setAttribute("cx", singaporePoint.x);
-  singaporeRing.setAttribute("cy", singaporePoint.y);
-  singaporeRing.setAttribute("r", "46");
-  singaporeRing.setAttribute("fill", "none");
-  singaporeRing.setAttribute("stroke", "rgba(31, 111, 97, 0.28)");
-  singaporeRing.setAttribute("stroke-dasharray", "8 10");
-  singaporeRing.setAttribute("stroke-width", "2");
-  mapSvg.appendChild(singaporeRing);
+    window.L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 8,
+      minZoom: 3,
+      attribution: "&copy; OpenStreetMap contributors",
+    }).addTo(issueMap);
+  }
+
+  if (issueLayer) {
+    issueLayer.remove();
+  }
+
+  issueLayer = window.L.layerGroup().addTo(issueMap);
+  const bounds = [];
+
+  const singapore = [1.3521, 103.8198];
+  window.L.circle(singapore, {
+    radius: 120000,
+    color: "#1f6f61",
+    weight: 2,
+    dashArray: "6 8",
+    fillOpacity: 0.04,
+  }).addTo(issueLayer);
+  bounds.push(singapore);
 
   features.forEach((feature, index) => {
     const [longitude, latitude] = feature.geometry.coordinates;
-    const issuePoint = projectPoint(latitude, longitude);
+    const latLng = [latitude, longitude];
+    bounds.push(latLng);
 
-    const ring = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-    ring.setAttribute("cx", issuePoint.x);
-    ring.setAttribute("cy", issuePoint.y);
-    ring.setAttribute("r", feature.properties.severity === "critical" ? "26" : "20");
-    ring.setAttribute("class", "pulse-ring");
-    ring.setAttribute("filter", "url(#glow)");
-    mapSvg.appendChild(ring);
-
-    const core = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-    core.setAttribute("cx", issuePoint.x);
-    core.setAttribute("cy", issuePoint.y);
-    core.setAttribute("r", "9");
-    core.setAttribute("class", "pulse-core");
-    mapSvg.appendChild(core);
-
-    feature.properties.recommendations.slice(0, 2).forEach((recommendation) => {
-      const supplierPoint = projectPoint(
-        recommendation.recommended_supplier.latitude,
-        recommendation.recommended_supplier.longitude,
+    const marker = window.L.circleMarker(latLng, {
+      radius: feature.properties.severity === "critical" ? 11 : 8,
+      color: "#ffffff",
+      weight: 2,
+      fillColor: "#bf493d",
+      fillOpacity: 0.92,
+    })
+      .addTo(issueLayer)
+      .bindPopup(
+        `<strong>${feature.properties.title}</strong><br>${feature.properties.region}<br><a href="${feature.properties.source_url}" target="_blank" rel="noreferrer">Read article</a>`,
       );
 
-      const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-      line.setAttribute("x1", issuePoint.x);
-      line.setAttribute("y1", issuePoint.y);
-      line.setAttribute("x2", supplierPoint.x);
-      line.setAttribute("y2", supplierPoint.y);
-      line.setAttribute("class", "map-line");
-      mapSvg.appendChild(line);
+    marker.on("click", () => renderSelection(feature));
 
-      const supplierNode = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-      supplierNode.setAttribute("cx", supplierPoint.x);
-      supplierNode.setAttribute("cy", supplierPoint.y);
-      supplierNode.setAttribute("r", "7");
-      supplierNode.setAttribute("class", "supplier-node");
-      mapSvg.appendChild(supplierNode);
+    feature.properties.recommendations.slice(0, 2).forEach((recommendation) => {
+      const supplierLatLng = [
+        recommendation.recommended_supplier.latitude,
+        recommendation.recommended_supplier.longitude,
+      ];
+      bounds.push(supplierLatLng);
+
+      window.L.polyline([latLng, supplierLatLng], {
+        color: "#1f6f61",
+        weight: 2,
+        opacity: 0.45,
+        dashArray: "6 8",
+      }).addTo(issueLayer);
+
+      window.L.circleMarker(supplierLatLng, {
+        radius: 6,
+        color: "#ffffff",
+        weight: 2,
+        fillColor: "#1f6f61",
+        fillOpacity: 0.95,
+      })
+        .addTo(issueLayer)
+        .bindPopup(
+          `<strong>${recommendation.recommended_supplier.supplier_name}</strong><br>${recommendation.product}<br>${recommendation.recommended_supplier.country}`,
+        );
     });
-
-    const hit = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-    hit.setAttribute("cx", issuePoint.x);
-    hit.setAttribute("cy", issuePoint.y);
-    hit.setAttribute("r", "24");
-    hit.setAttribute("class", "map-hit");
-    hit.setAttribute("data-index", String(index));
-    hit.addEventListener("click", () => renderSelection(feature));
-    mapSvg.appendChild(hit);
   });
+
+  issueMap.fitBounds(bounds, { padding: [36, 36], maxZoom: 5 });
 }
 
 async function loadDashboard({ refresh = false } = {}) {
