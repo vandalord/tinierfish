@@ -56,7 +56,8 @@ class SourceDiscoveryConfig:
         "drought",
     )
     batch_frequency: str = "hourly"
-    max_articles_per_source: int = 2
+    max_articles_per_source: int = 1
+    max_total_live_articles: int = 1
     max_live_seed_attempts: int = 1
     source_seeds: tuple[SourceSeed, ...] = (
         SourceSeed(
@@ -64,10 +65,11 @@ class SourceDiscoveryConfig:
             publisher="Channel NewsAsia",
             region="Asia",
             goal=(
-                "Extract up to 5 recent article links from this page that are about "
+                "Extract up to 1 recent article link from this page that is about "
                 "supply chain disruption, logistics delays, food imports, weather damage, "
                 "port congestion, shipping disruption, strikes, or agricultural shortages "
-                "relevant to Singapore or Southeast Asia. Respond only as JSON with "
+                "relevant to Singapore or Southeast Asia. Only return live article URLs that are "
+                "direct news story pages, not category pages, tag pages, or expired links. Respond only as JSON with "
                 '{"articles":[{"url":"","title":"","summary":"","region":""}]}.'
             ),
         ),
@@ -76,10 +78,11 @@ class SourceDiscoveryConfig:
             publisher="Reuters",
             region="Asia",
             goal=(
-                "Extract up to 5 recent Reuters article links from this page about "
+                "Extract up to 1 recent Reuters article link from this page about "
                 "food supply, logistics disruptions, weather shocks, port issues, freight, "
                 "or trade disruptions relevant to Asia or Singapore. Respond only as JSON "
-                'with {"articles":[{"url":"","title":"","summary":"","region":""}]}.'
+                'with {"articles":[{"url":"","title":"","summary":"","region":""}]}. '
+                "Only include live article pages that should open directly."
             ),
         ),
         SourceSeed(
@@ -87,10 +90,11 @@ class SourceDiscoveryConfig:
             publisher="The Maritime Executive",
             region="Global",
             goal=(
-                "Extract up to 5 recent article links from this page specifically about "
+                "Extract up to 1 recent article link from this page specifically about "
                 "port congestion, shipping delays, strikes, route disruption, or cargo risk "
                 "that could affect food or container supply chains in Asia. Respond only as JSON "
-                'with {"articles":[{"url":"","title":"","summary":"","region":""}]}.'
+                'with {"articles":[{"url":"","title":"","summary":"","region":""}]}. '
+                "Only include direct live article pages."
             ),
         ),
         SourceSeed(
@@ -98,10 +102,11 @@ class SourceDiscoveryConfig:
             publisher="Seatrade Maritime",
             region="Global",
             goal=(
-                "Extract up to 5 recent article links from this page about maritime logistics, "
+                "Extract up to 1 recent article link from this page about maritime logistics, "
                 "port disruption, vessel congestion, weather impacts, or trade routes affecting "
                 "Asia. Respond only as JSON with "
-                '{"articles":[{"url":"","title":"","summary":"","region":""}]}.'
+                '{"articles":[{"url":"","title":"","summary":"","region":""}]}. '
+                "Only include direct live article pages."
             ),
         ),
     )
@@ -181,13 +186,23 @@ class SourceDiscoveryAgent:
         live_errors: list[str] = []
         if self.tinyfish_client.is_configured:
             collected: list[dict[str, str]] = []
+            seen_urls: set[str] = set()
             for seed in self.config.source_seeds[:max_seed_attempts]:
                 try:
                     result = self.tinyfish_client.extract_json(seed.url, seed.goal)
                 except TinyFishAPIError as exc:
                     live_errors.append(f"{seed.publisher}: {exc}")
                     continue
-                collected.extend(self._normalize_tinyfish_articles(seed, result))
+                for article in self._normalize_tinyfish_articles(seed, result):
+                    url = article["url"]
+                    if url in seen_urls:
+                        continue
+                    seen_urls.add(url)
+                    collected.append(article)
+                    if len(collected) >= self.config.max_total_live_articles:
+                        break
+                if len(collected) >= self.config.max_total_live_articles:
+                    break
 
             if collected:
                 return collected, "tinyfish_web", live_errors
@@ -275,6 +290,7 @@ class SourceDiscoveryAgent:
 
         searchable_text = " ".join((title, summary))
         return any(term in searchable_text for term in self.config.supply_chain_terms)
+
 
     def _score_candidate(self, candidate: dict[str, str]) -> float:
         text = " ".join(

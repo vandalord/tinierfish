@@ -171,6 +171,12 @@ class TinyFishAlternativeSourcingClient:
                 "live_error": str(exc),
                 "recommendations": [],
             }
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "engine": "heuristic_fallback",
+                "live_error": f"Alternative sourcing live lookup failed: {exc}",
+                "recommendations": [],
+            }
 
     def _build_goal(self, issue: IssueRecord) -> str:
         products = ", ".join(issue.extraction.affected_products) or "mixed food supply"
@@ -181,7 +187,7 @@ class TinyFishAlternativeSourcingClient:
             "Read this disruption article and recommend alternative sourcing options for Singapore. "
             "Use current web context if needed, but respond only as JSON with the exact shape "
             '{"recommendations":[{"strategy":"first_cheapest","product":"","supplier_name":"","country":"","products":[],"average_cost_index":1.0,"reliability_score":0.0,"active_risk_tags":[],"source_label":"","source_url":"","rationale":"","estimated_cost_delta_pct":0.0,"security_score":0.0}]}. '
-            "Recommend up to 4 alternatives outside the affected countries and not exposed to the same disruption. "
+            "Recommend exactly 1 best alternative outside the affected countries and not exposed to the same disruption. "
             "Prefer nearby Asia-Pacific sourcing options when realistic. "
             "Use strategy only from: first_cheapest, first_secure. "
             f"Affected region anchor: {issue.region}. "
@@ -205,7 +211,7 @@ class TinyFishAlternativeSourcingClient:
         seen_keys: set[tuple[str, str, str, str]] = set()
         blocked_countries = self._blocked_countries(issue)
 
-        for index, item in enumerate(raw_recommendations, start=1):
+        for index, item in enumerate(raw_recommendations[:1], start=1):
             if not isinstance(item, dict):
                 continue
 
@@ -314,9 +320,11 @@ class AlternativeSourcingAgent:
         self,
         supplier_catalog: list[SupplierOption] | None = None,
         live_client: TinyFishAlternativeSourcingClient | None = None,
+        max_recommendations_per_issue: int = 1,
     ) -> None:
         self.supplier_catalog = supplier_catalog or DEFAULT_SUPPLIERS
         self.live_client = live_client or TinyFishAlternativeSourcingClient()
+        self.max_recommendations_per_issue = max_recommendations_per_issue
 
     def run(self, batch_id: str, issue_batch: IssueBatch) -> RecommendationBatch:
         recommendations: list[Recommendation] = []
@@ -332,8 +340,9 @@ class AlternativeSourcingAgent:
 
             live_recommendations = list(live_payload.get("recommendations", []))
             if live_recommendations:
-                recommendations.extend(live_recommendations)
-                live_recommendation_count += len(live_recommendations)
+                trimmed_live_recommendations = live_recommendations[: self.max_recommendations_per_issue]
+                recommendations.extend(trimmed_live_recommendations)
+                live_recommendation_count += len(trimmed_live_recommendations)
                 continue
 
             issue_recommendations = self._build_fallback_recommendations(issue)
@@ -341,8 +350,9 @@ class AlternativeSourcingAgent:
                 issues_without_matches.append(issue.issue_id)
                 continue
 
-            recommendations.extend(issue_recommendations)
-            fallback_recommendation_count += len(issue_recommendations)
+            trimmed_issue_recommendations = issue_recommendations[: self.max_recommendations_per_issue]
+            recommendations.extend(trimmed_issue_recommendations)
+            fallback_recommendation_count += len(trimmed_issue_recommendations)
 
         return RecommendationBatch(
             batch_id=batch_id,

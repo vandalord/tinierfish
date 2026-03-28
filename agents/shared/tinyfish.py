@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import ssl
 import time
 from dataclasses import dataclass, field
@@ -34,6 +35,7 @@ class TinyFishWebAgentClient:
 
     def __post_init__(self) -> None:
         self.api_key = self.api_key or os.getenv("TINYFISH_API_KEY")
+        self.timeout_seconds = self._read_timeout_seconds()
         self.verify_ssl = self._read_verify_ssl_flag()
         self.ca_bundle_path = (
             self.ca_bundle_path
@@ -88,8 +90,11 @@ class TinyFishWebAgentClient:
                 last_error = TinyFishAPIError(
                     self._format_network_error(reason, ssl_context)
                 )
-            except TimeoutError:
-                last_error = TinyFishAPIError("TinyFish request timed out.")
+            except (TimeoutError, socket.timeout):
+                last_error = TinyFishAPIError(
+                    f"TinyFish read operation timed out after {self.timeout_seconds}s."
+                )
+                break
             except json.JSONDecodeError:
                 last_error = TinyFishAPIError("TinyFish returned invalid JSON.")
 
@@ -160,6 +165,18 @@ class TinyFishWebAgentClient:
         if value is None:
             return True
         return value.strip().lower() not in {"0", "false", "no", "off"}
+
+    def _read_timeout_seconds(self) -> int:
+        value = os.getenv("TINYFISH_TIMEOUT_SECONDS")
+        if value is None:
+            return self.timeout_seconds
+
+        try:
+            parsed = int(value)
+        except ValueError:
+            return self.timeout_seconds
+
+        return max(10, parsed)
 
     def _format_network_error(
         self,
