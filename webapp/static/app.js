@@ -1,5 +1,5 @@
 const statusText = document.getElementById("status-text");
-const refreshButton = document.getElementById("refresh-button");
+const lastUpdatedText = document.getElementById("last-updated-text");
 const sourceBadge = document.getElementById("source-badge");
 const refreshBadge = document.getElementById("refresh-badge");
 const mapCanvas = document.getElementById("map-canvas");
@@ -14,7 +14,6 @@ const metricCritical = document.getElementById("metric-critical");
 const metricSources = document.getElementById("metric-sources");
 
 let dashboardState = null;
-let statusPollHandle = null;
 let issueMap = null;
 let issueLayer = null;
 
@@ -138,6 +137,18 @@ function updateRuntimeBadges(runtime, sourceMode) {
   const refreshStatus = runtime?.status || "unknown";
   refreshBadge.className = `status-badge ${refreshStatus}`;
   refreshBadge.textContent = labelizeRefreshStatus(refreshStatus);
+}
+
+function updateLastUpdatedText(payload, runtime) {
+  if (payload?.generated_at) {
+    lastUpdatedText.textContent = `Last updated: ${new Date(payload.generated_at).toLocaleString()}`;
+    return;
+  }
+  if (runtime?.last_completed_at) {
+    lastUpdatedText.textContent = `Last updated: ${new Date(runtime.last_completed_at).toLocaleString()}`;
+    return;
+  }
+  lastUpdatedText.textContent = "Last updated: waiting for first scrape";
 }
 
 function renderLiveHealth(runtime, payload = null) {
@@ -296,96 +307,62 @@ function drawMap(features) {
   issueMap.fitBounds(bounds, { padding: [36, 36], maxZoom: 5 });
 }
 
-async function loadDashboard({ refresh = false } = {}) {
-  if (refresh) {
-    statusText.textContent = "Queueing a live TinyFish refresh...";
-    refreshButton.disabled = true;
-    const refreshResponse = await fetch("/api/refresh", {
-      method: "POST",
-      cache: "no-store",
-    });
-    const refreshPayload = await refreshResponse.json();
-    updateRuntimeBadges(
-      { status: refreshPayload.status || "refreshing" },
-      dashboardState?.source_mode || "unknown",
-    );
-    await waitForRefresh();
-  }
-
-  if (!refresh) {
-    statusText.textContent = "Loading latest batch...";
-  }
+async function loadDashboard() {
+  statusText.textContent = "Loading latest cached batch...";
 
   const response = await fetch("/api/dashboard", { cache: "no-store" });
   const payload = await response.json();
 
   dashboardState = payload;
-  const features = payload.visualization_batch.geojson.features;
+  const features = payload.visualization_batch?.geojson?.features || [];
 
   renderMetrics(payload);
   renderTimeline(payload);
-  renderIssueCards(features);
-  drawMap(features);
   updateRuntimeBadges(payload.runtime, payload.source_mode);
   renderLiveHealth(payload.runtime, payload);
-  statusText.textContent = `Live batch ${payload.batch_root} updated ${new Date(payload.generated_at).toLocaleString()}`;
+  updateLastUpdatedText(payload, payload.runtime);
+
+  if (!payload.batch_root) {
+    renderIssueCards([]);
+    drawMap([]);
+    statusText.textContent =
+      payload.runtime?.status === "refreshing"
+        ? "No cached data yet. The first hourly scrape is running now."
+        : "No cached data yet. Waiting for the first hourly scrape.";
+    selectionPanel.innerHTML = `
+      <h2 class="detail-title">Waiting for first scrape</h2>
+      <p class="detail-copy">This dashboard is cache-first and refreshes once per hour. The first scrape starts automatically when no cached batch exists.</p>
+    `;
+    timelinePanel.innerHTML = `
+      <div class="timeline-item">
+        <strong>Next scheduled scrape</strong>
+        <div class="detail-copy">${formatMaybeDate(payload.runtime?.next_refresh_due_at, "Starting now")}</div>
+      </div>
+    `;
+    return;
+  }
+
+  renderIssueCards(features);
+  drawMap(features);
+
+  const nextDue = formatMaybeDate(payload.runtime?.next_refresh_due_at, "Calculating...");
+  statusText.textContent = `Batch ${payload.batch_root} cached. Next scrape due ${nextDue}.`;
 
   if (features.length) {
     renderSelection(features[0]);
   } else {
     selectionPanel.innerHTML = `
       <h2 class="detail-title">No disruptions in this batch</h2>
-      <p class="detail-copy">Try another refresh after your data source updates.</p>
+      <p class="detail-copy">The hourly crawler will keep updating the cache automatically.</p>
     `;
   }
-
-  refreshButton.disabled = false;
 }
-
-async function waitForRefresh() {
-  if (statusPollHandle) {
-    clearTimeout(statusPollHandle);
-    statusPollHandle = null;
-  }
-
-  while (true) {
-    const response = await fetch("/api/status", { cache: "no-store" });
-    const payload = await response.json();
-    updateRuntimeBadges(payload.refresh, payload.refresh.last_source_mode || dashboardState?.source_mode || "unknown");
-    renderLiveHealth(payload.refresh, dashboardState);
-
-    if (payload.refresh.status === "idle") {
-      if (payload.refresh.last_error) {
-        statusText.textContent = `Refresh failed: ${payload.refresh.last_error}`;
-      }
-      return;
-    }
-
-    if (payload.refresh.status === "error") {
-      throw new Error(payload.refresh.last_error || "Background refresh failed.");
-    }
-
-    statusText.textContent = "TinyFish refresh is running in the background...";
-    await new Promise((resolve) => {
-      statusPollHandle = setTimeout(resolve, 2000);
-    });
-  }
-}
-
-refreshButton.addEventListener("click", () => {
-  loadDashboard({ refresh: true }).catch((error) => {
-    statusText.textContent = `Refresh failed: ${error.message}`;
-    updateRuntimeBadges({ status: "error" }, dashboardState?.source_mode || "unknown");
-    refreshButton.disabled = false;
-  });
-});
 
 loadDashboard().catch((error) => {
   statusText.textContent = `Dashboard failed to load: ${error.message}`;
   updateRuntimeBadges({ status: "error" }, "unknown");
-  refreshButton.disabled = false;
 });
 
 setInterval(() => {
-  loadDashboard({ refresh: false }).catch(() => {});
+  loadDashboard().catch(() => {});
 }, 60000);
