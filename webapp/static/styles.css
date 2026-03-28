@@ -231,6 +231,20 @@ h1 {
   height: 100%;
 }
 
+.leaflet-map {
+  width: 100%;
+  height: 100%;
+  min-height: 640px;
+}
+
+.leaflet-container {
+  font-family: "Avenir Next", "Segoe UI", sans-serif;
+}
+
+.leaflet-popup-content-wrapper {
+  border-radius: 16px;
+}
+
 .detail-column {
   display: grid;
   gap: 18px;
@@ -250,7 +264,8 @@ h1 {
 .timeline-panel,
 .recommendation-copy,
 .issue-meta,
-.fallback-meta {
+.fallback-meta,
+.article-link {
   color: var(--muted);
   line-height: 1.55;
 }
@@ -319,6 +334,26 @@ h1 {
   all: unset;
   cursor: pointer;
   display: block;
+}
+
+.issue-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  margin-top: 14px;
+}
+
+.issue-link,
+.detail-link {
+  color: var(--accent);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.issue-link:hover,
+.detail-link:hover {
+  text-decoration: underline;
 }
 
 .issue-title {
@@ -424,6 +459,10 @@ h1 {
   }
 
   .map-surface {
+    min-height: 460px;
+  }
+
+  .leaflet-map {
     min-height: 460px;
   }
 }

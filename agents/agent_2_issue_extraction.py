@@ -12,6 +12,7 @@ from agents.shared.models import (
     SourceBatch,
 )
 from agents.shared.tinyfish import TinyFishAPIError, TinyFishWebAgentClient
+from tinyfish import AsyncTinyFish
 
 
 REGION_COORDINATES: dict[str, tuple[float, float]] = {
@@ -58,15 +59,7 @@ class TinyFishAPIClient:
             try:
                 result = self.web_client.extract_json(
                     url=article_url,
-                    goal=(
-                        "Read this article and extract supply-chain disruption intelligence. "
-                        "Respond only as JSON with the exact shape "
-                        '{"summary":"","keywords":[],"negative_signals":[],"affected_products":[],"affected_regions":[],"risk_type":"weather","severity":"high","confidence":0.0}. '
-                        "Use risk_type from: weather, port_disruption, strike, conflict, policy, "
-                        "price_shock, disease, other. Use severity from: low, medium, high, critical. "
-                        "Focus on logistics bottlenecks, food imports, agriculture disruption, port issues, "
-                        "weather shocks, and operational impacts relevant to Singapore or Asia."
-                    ),
+                    goal=self.build_extraction_goal(),
                 )
                 normalized = self._normalize_tinyfish_result(result, title, summary, region_hint)
                 normalized["engine"] = "tinyfish_web"
@@ -82,6 +75,17 @@ class TinyFishAPIClient:
         fallback["engine"] = "heuristic_fallback"
         fallback["live_error"] = None
         return fallback
+
+    def build_extraction_goal(self) -> str:
+        return (
+            "Read this article and extract supply-chain disruption intelligence. "
+            "Respond only as JSON with the exact shape "
+            '{"summary":"","keywords":[],"negative_signals":[],"affected_products":[],"affected_regions":[],"risk_type":"weather","severity":"high","confidence":0.0}. '
+            "Use risk_type from: weather, port_disruption, strike, conflict, policy, "
+            "price_shock, disease, other. Use severity from: low, medium, high, critical. "
+            "Focus on logistics bottlenecks, food imports, agriculture disruption, port issues, "
+            "weather shocks, and operational impacts relevant to Singapore or Asia."
+        )
 
     def _normalize_tinyfish_result(
         self,
@@ -238,14 +242,27 @@ class IssueExtractionAgent:
         issues: list[IssueRecord] = []
         live_issue_count = 0
         live_errors: list[str] = []
+        async_extraction_payloads, async_attempted = self._extract_async_payloads(source_batch)
 
         for index, source in enumerate(source_batch.sources, start=1):
-            extraction_payload = self.tinyfish_client.extract_keywords(
-                title=source.title,
-                summary=source.summary,
-                article_url=source.url,
-                region_hint=source.region,
-            )
+            extraction_payload = async_extraction_payloads.get(source.url)
+            if extraction_payload is None:
+                if async_attempted:
+                    extraction_payload = self.tinyfish_client._heuristic_extract(
+                        source.title,
+                        source.summary,
+                        source.region,
+                    ) | {
+                        "engine": "heuristic_fallback",
+                        "live_error": "Async TinyFish extraction did not return a completed result for this article.",
+                    }
+                else:
+                    extraction_payload = self.tinyfish_client.extract_keywords(
+                        title=source.title,
+                        summary=source.summary,
+                        article_url=source.url,
+                        region_hint=source.region,
+                    )
             if extraction_payload.get("engine") == "tinyfish_web":
                 live_issue_count += 1
             if extraction_payload.get("live_error"):
@@ -290,6 +307,39 @@ class IssueExtractionAgent:
             },
             issues=issues,
         )
+
+    def _extract_async_payloads(
+        self,
+        source_batch: SourceBatch,
+    ) -> tuple[dict[str, dict[str, object]], bool]:
+        if not self.tinyfish_client.web_client.is_configured:
+            return {}, False
+
+        tasks = [
+            {"url": source.url, "goal": self.tinyfish_client.build_extraction_goal()}
+            for source in source_batch.sources
+        ]
+        if not tasks:
+            return {}, False
+
+        try:
+            responses = self.tinyfish_client.web_client.run_many_concurrent(tasks)
+        except TinyFishAPIError:
+            return {}, True
+
+        payloads: dict[str, dict[str, object]] = {}
+        for source, response in zip(source_batch.sources, responses):
+            result = response.get("result") or response.get("resultJson")
+            if response.get("status") != "COMPLETED" or not isinstance(result, dict):
+                continue
+            payloads[source.url] = self.tinyfish_client._normalize_tinyfish_result(
+                result,
+                source.title,
+                source.summary,
+                source.region,
+            ) | {"engine": "tinyfish_web", "live_error": None}
+
+        return payloads, True
 
     def _select_region(self, source_region: str, affected_regions: list[str]) -> str:
         if source_region in REGION_COORDINATES:
