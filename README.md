@@ -1,2 +1,5 @@
-# cookedtinyfish
-TinyFish AI 2026
+# TinierFish
+_for TinyFish AI 2026_
+---
+
+
