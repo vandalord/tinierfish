@@ -27,17 +27,13 @@ def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-<<<<<<< HEAD
 def append_refresh_log(message: str) -> None:
     OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
     with REFRESH_LOG_PATH.open("a", encoding="utf-8") as handle:
         handle.write(f"[{utc_now_iso()}] {message}\n")
 
 
-def load_dashboard_payload(force_refresh: bool = False) -> dict[str, object]:
-=======
 def read_cached_dashboard_payload() -> dict[str, object] | None:
->>>>>>> f82097e878af2ba4c3a5e6f5998b22a20b02c73a
     latest_path = OUTPUTS_DIR / "latest_dashboard.json"
     if not latest_path.exists():
         return None

@@ -23,10 +23,14 @@ function severityClass(severity) {
 
 function buildRecommendationMarkup(recommendations) {
   if (!recommendations.length) {
-    return `<p class="detail-copy">No fallback supplier matched this disruption yet.</p>`;
+    return `
+      <h3 class="detail-subtitle">Alternative supply chain source</h3>
+      <p class="detail-copy">No fallback supplier matched this disruption yet.</p>
+    `;
   }
 
   return `
+    <h3 class="detail-subtitle">Alternative supply chain source</h3>
     <div class="fallback-list">
       ${recommendations
         .map(
