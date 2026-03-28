@@ -270,6 +270,7 @@ class IssueExtractionAgent:
                 IssueRecord(
                     issue_id=f"{batch_id}-ISSUE-{index:03d}",
                     source_url=source.url,
+                    source_publisher=source.publisher,
                     title=source.title,
                     region=region,
                     latitude=latitude,

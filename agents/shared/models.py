@@ -66,6 +66,7 @@ class KeywordExtraction:
 class IssueRecord:
     issue_id: str
     source_url: str
+    source_publisher: str
     title: str
     region: str
     latitude: float
@@ -77,6 +78,7 @@ class IssueRecord:
         return {
             "issue_id": self.issue_id,
             "source_url": self.source_url,
+            "source_publisher": self.source_publisher,
             "title": self.title,
             "region": self.region,
             "latitude": self.latitude,
@@ -108,6 +110,8 @@ class Recommendation:
     strategy: str
     product: str
     recommended_supplier: SupplierOption
+    source_label: str | None
+    source_url: str | None
     rationale: str
     estimated_cost_delta_pct: float
     security_score: float
@@ -118,6 +122,8 @@ class Recommendation:
             "strategy": self.strategy,
             "product": self.product,
             "recommended_supplier": self.recommended_supplier.to_dict(),
+            "source_label": self.source_label,
+            "source_url": self.source_url,
             "rationale": self.rationale,
             "estimated_cost_delta_pct": self.estimated_cost_delta_pct,
             "security_score": self.security_score,

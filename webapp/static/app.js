@@ -47,6 +47,7 @@ function buildRecommendationMarkup(recommendations) {
           (item) => `
             <div class="fallback-card">
               <strong>${item.recommended_supplier.supplier_name}</strong>
+              ${buildSourceMarkup(item.source_label, item.source_url)}
               <p class="fallback-meta">${item.strategy} • ${item.product} • ${item.recommended_supplier.country}</p>
               <p class="recommendation-copy">${item.rationale}</p>
             </div>
@@ -57,12 +58,20 @@ function buildRecommendationMarkup(recommendations) {
   `;
 }
 
+function buildSourceMarkup(label, url) {
+  if (url) {
+    return `<p class="source-line">Source: <a class="source-link" href="${url}" target="_blank" rel="noreferrer">${label || url}</a></p>`;
+  }
+  return `<p class="source-line">Source: ${label || "Unknown source"}</p>`;
+}
+
 function renderSelection(feature) {
   const props = feature.properties;
   const signals = props.negative_signals.length ? props.negative_signals : ["monitoring"];
 
   selectionPanel.innerHTML = `
     <h2 class="detail-title">${props.title}</h2>
+    ${buildSourceMarkup(props.source_publisher, props.source_url)}
     <p class="detail-copy">${props.region} is flagged for a ${props.risk_type.replaceAll("_", " ")} event with ${props.severity} severity.</p>
     <div class="tag-row">
       ${props.products.map((product) => `<span class="pill">${product}</span>`).join("")}
@@ -182,24 +191,26 @@ function renderIssueCards(features) {
   issuesList.innerHTML = features
     .map(
       (feature, index) => `
-        <article class="issue-card">
-          <button type="button" data-index="${index}">
+        <article class="issue-card" data-index="${index}">
             <div class="tag-row">
               <span class="pill ${severityClass(feature.properties.severity)}">${feature.properties.severity}</span>
               <span class="pill">${feature.properties.region}</span>
             </div>
             <h3 class="issue-title">${feature.properties.title}</h3>
+            ${buildSourceMarkup(feature.properties.source_publisher, feature.properties.source_url)}
             <p class="issue-meta">Products: ${feature.properties.products.join(", ")}</p>
             <p class="issue-meta">Signals: ${feature.properties.negative_signals.join(", ") || "monitoring"}</p>
-          </button>
         </article>
       `,
     )
     .join("");
 
-  issuesList.querySelectorAll("button[data-index]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const index = Number(button.getAttribute("data-index"));
+  issuesList.querySelectorAll("article[data-index]").forEach((card) => {
+    card.addEventListener("click", (event) => {
+      if (event.target instanceof Element && event.target.closest("a")) {
+        return;
+      }
+      const index = Number(card.getAttribute("data-index"));
       renderSelection(features[index]);
     });
   });

@@ -180,7 +180,7 @@ class TinyFishAlternativeSourcingClient:
         return (
             "Read this disruption article and recommend alternative sourcing options for Singapore. "
             "Use current web context if needed, but respond only as JSON with the exact shape "
-            '{"recommendations":[{"strategy":"first_cheapest","product":"","supplier_name":"","country":"","products":[],"average_cost_index":1.0,"reliability_score":0.0,"active_risk_tags":[],"rationale":"","estimated_cost_delta_pct":0.0,"security_score":0.0}]}. '
+            '{"recommendations":[{"strategy":"first_cheapest","product":"","supplier_name":"","country":"","products":[],"average_cost_index":1.0,"reliability_score":0.0,"active_risk_tags":[],"source_label":"","source_url":"","rationale":"","estimated_cost_delta_pct":0.0,"security_score":0.0}]}. '
             "Recommend up to 4 alternatives outside the affected countries and not exposed to the same disruption. "
             "Prefer nearby Asia-Pacific sourcing options when realistic. "
             "Use strategy only from: first_cheapest, first_secure. "
@@ -242,6 +242,8 @@ class TinyFishAlternativeSourcingClient:
             rationale = str(item.get("rationale", "")).strip() or (
                 f"{supplier_name} in {country} is an online-researched alternative outside the affected region."
             )
+            source_label = str(item.get("source_label", "")).strip() or "TinyFish live search"
+            source_url = str(item.get("source_url", "")).strip() or issue.source_url
 
             normalized.append(
                 Recommendation(
@@ -259,6 +261,8 @@ class TinyFishAlternativeSourcingClient:
                         reliability_score=reliability_score,
                         active_risk_tags=active_risk_tags,
                     ),
+                    source_label=source_label,
+                    source_url=source_url,
                     rationale=rationale,
                     estimated_cost_delta_pct=estimated_cost_delta_pct,
                     security_score=security_score,
@@ -370,6 +374,8 @@ class AlternativeSourcingAgent:
                     strategy="first_cheapest",
                     product=product,
                     recommended_supplier=cheapest,
+                    source_label="Local fallback supplier catalog",
+                    source_url=None,
                     rationale=self._build_rationale(issue, product, cheapest, "cheapest"),
                     estimated_cost_delta_pct=round((cheapest.average_cost_index - 1.0) * 100, 2),
                     security_score=self._security_score(cheapest),
@@ -386,6 +392,8 @@ class AlternativeSourcingAgent:
                     strategy="first_secure",
                     product=product,
                     recommended_supplier=secure,
+                    source_label="Local fallback supplier catalog",
+                    source_url=None,
                     rationale=self._build_rationale(issue, product, secure, "secure"),
                     estimated_cost_delta_pct=round((secure.average_cost_index - 1.0) * 100, 2),
                     security_score=self._security_score(secure),
