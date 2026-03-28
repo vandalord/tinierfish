@@ -28,7 +28,7 @@ class RiskType(str, Enum):
     OTHER = "other"
 
 
-@dataclass(slots=True)
+@dataclass
 class SourceRecord:
     url: str
     title: str
@@ -43,7 +43,7 @@ class SourceRecord:
         return asdict(self)
 
 
-@dataclass(slots=True)
+@dataclass
 class KeywordExtraction:
     keywords: list[str]
     negative_signals: list[str]
@@ -62,10 +62,11 @@ class KeywordExtraction:
         }
 
 
-@dataclass(slots=True)
+@dataclass
 class IssueRecord:
     issue_id: str
     source_url: str
+    source_publisher: str
     title: str
     region: str
     latitude: float
@@ -77,6 +78,7 @@ class IssueRecord:
         return {
             "issue_id": self.issue_id,
             "source_url": self.source_url,
+            "source_publisher": self.source_publisher,
             "title": self.title,
             "region": self.region,
             "latitude": self.latitude,
@@ -86,7 +88,7 @@ class IssueRecord:
         }
 
 
-@dataclass(slots=True)
+@dataclass
 class SupplierOption:
     supplier_id: str
     supplier_name: str
@@ -102,12 +104,14 @@ class SupplierOption:
         return asdict(self)
 
 
-@dataclass(slots=True)
+@dataclass
 class Recommendation:
     issue_id: str
     strategy: str
     product: str
     recommended_supplier: SupplierOption
+    source_label: str | None
+    source_url: str | None
     rationale: str
     estimated_cost_delta_pct: float
     security_score: float
@@ -118,20 +122,22 @@ class Recommendation:
             "strategy": self.strategy,
             "product": self.product,
             "recommended_supplier": self.recommended_supplier.to_dict(),
+            "source_label": self.source_label,
+            "source_url": self.source_url,
             "rationale": self.rationale,
             "estimated_cost_delta_pct": self.estimated_cost_delta_pct,
             "security_score": self.security_score,
         }
 
 
-@dataclass(slots=True)
+@dataclass
 class AgentBatch:
     batch_id: str
     created_at: str = field(default_factory=utc_now_iso)
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass(slots=True)
+@dataclass
 class SourceBatch(AgentBatch):
     sources: list[SourceRecord] = field(default_factory=list)
 
@@ -144,7 +150,7 @@ class SourceBatch(AgentBatch):
         }
 
 
-@dataclass(slots=True)
+@dataclass
 class IssueBatch(AgentBatch):
     issues: list[IssueRecord] = field(default_factory=list)
 
@@ -157,7 +163,7 @@ class IssueBatch(AgentBatch):
         }
 
 
-@dataclass(slots=True)
+@dataclass
 class RecommendationBatch(AgentBatch):
     recommendations: list[Recommendation] = field(default_factory=list)
 
@@ -172,7 +178,7 @@ class RecommendationBatch(AgentBatch):
         }
 
 
-@dataclass(slots=True)
+@dataclass
 class VisualizationBatch(AgentBatch):
     geojson: dict[str, Any] = field(default_factory=dict)
     html_path: str | None = None

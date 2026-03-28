@@ -34,6 +34,7 @@ function buildRecommendationMarkup(recommendations) {
           (item) => `
             <div class="fallback-card">
               <strong>${item.recommended_supplier.supplier_name}</strong>
+              ${buildSourceMarkup(item.source_label, item.source_url)}
               <p class="fallback-meta">${item.strategy} • ${item.product} • ${item.recommended_supplier.country}</p>
               <p class="recommendation-copy">${item.rationale}</p>
             </div>
@@ -44,12 +45,20 @@ function buildRecommendationMarkup(recommendations) {
   `;
 }
 
+function buildSourceMarkup(label, url) {
+  if (url) {
+    return `<p class="source-line">Source: <a class="source-link" href="${url}" target="_blank" rel="noreferrer">${label || url}</a></p>`;
+  }
+  return `<p class="source-line">Source: ${label || "Unknown source"}</p>`;
+}
+
 function renderSelection(feature) {
   const props = feature.properties;
   const signals = props.negative_signals.length ? props.negative_signals : ["monitoring"];
 
   selectionPanel.innerHTML = `
     <h2 class="detail-title">${props.title}</h2>
+    ${buildSourceMarkup(props.source_publisher, props.source_url)}
     <p class="detail-copy">${props.region} is flagged for a ${props.risk_type.replaceAll("_", " ")} event with ${props.severity} severity.</p>
     <p class="detail-copy">${props.narrative || "No extracted narrative available."}</p>
     <div class="tag-row">
@@ -131,7 +140,27 @@ function updateRuntimeBadges(runtime, sourceMode) {
   refreshBadge.textContent = labelizeRefreshStatus(refreshStatus);
 }
 
-function renderLiveHealth(runtime) {
+function renderLiveHealth(runtime, payload = null) {
+  const recommendationMetadata = payload?.recommendation_batch?.metadata || {};
+  const liveRecommendationCount = recommendationMetadata.live_recommendation_count ?? null;
+  const fallbackRecommendationCount = recommendationMetadata.fallback_recommendation_count ?? null;
+  const recommendationErrors = recommendationMetadata.live_errors || [];
+
+  const recommendationStatusMarkup =
+    liveRecommendationCount === null && fallbackRecommendationCount === null
+      ? ""
+      : `
+        <div class="health-item">
+          <span class="health-label">Recommendation engine</span>
+          <div class="detail-copy">${
+            liveRecommendationCount > 0 ? "TinyFish live recommendations active." : "Fallback supplier catalog in use."
+          }</div>
+          <div class="detail-copy">Live recommendations: ${liveRecommendationCount || 0}</div>
+          <div class="detail-copy">Fallback recommendations: ${fallbackRecommendationCount || 0}</div>
+          <div class="detail-copy">${recommendationErrors[0] || "No recommendation engine errors recorded."}</div>
+        </div>
+      `;
+
   liveHealthPanel.innerHTML = `
     <div class="health-item">
       <span class="health-label">Last live success</span>
@@ -143,6 +172,7 @@ function renderLiveHealth(runtime) {
       <div class="detail-copy">${formatMaybeDate(runtime?.last_live_error_at)}</div>
       <div class="detail-copy">${runtime?.last_live_error || "No recorded live errors."}</div>
     </div>
+    ${recommendationStatusMarkup}
   `;
 }
 
@@ -150,13 +180,13 @@ function renderIssueCards(features) {
   issuesList.innerHTML = features
     .map(
       (feature, index) => `
-        <article class="issue-card">
-          <button type="button" data-index="${index}">
+        <article class="issue-card" data-index="${index}">
             <div class="tag-row">
               <span class="pill ${severityClass(feature.properties.severity)}">${feature.properties.severity}</span>
               <span class="pill">${feature.properties.region}</span>
             </div>
             <h3 class="issue-title">${feature.properties.title}</h3>
+            ${buildSourceMarkup(feature.properties.source_publisher, feature.properties.source_url)}
             <p class="issue-meta">Products: ${feature.properties.products.join(", ")}</p>
             <p class="issue-meta">Signals: ${feature.properties.negative_signals.join(", ") || "monitoring"}</p>
           </button>
@@ -169,9 +199,12 @@ function renderIssueCards(features) {
     )
     .join("");
 
-  issuesList.querySelectorAll("button[data-index]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const index = Number(button.getAttribute("data-index"));
+  issuesList.querySelectorAll("article[data-index]").forEach((card) => {
+    card.addEventListener("click", (event) => {
+      if (event.target instanceof Element && event.target.closest("a")) {
+        return;
+      }
+      const index = Number(card.getAttribute("data-index"));
       renderSelection(features[index]);
     });
   });
@@ -294,7 +327,7 @@ async function loadDashboard({ refresh = false } = {}) {
   renderIssueCards(features);
   drawMap(features);
   updateRuntimeBadges(payload.runtime, payload.source_mode);
-  renderLiveHealth(payload.runtime);
+  renderLiveHealth(payload.runtime, payload);
   statusText.textContent = `Live batch ${payload.batch_root} updated ${new Date(payload.generated_at).toLocaleString()}`;
 
   if (features.length) {
@@ -319,7 +352,7 @@ async function waitForRefresh() {
     const response = await fetch("/api/status", { cache: "no-store" });
     const payload = await response.json();
     updateRuntimeBadges(payload.refresh, payload.refresh.last_source_mode || dashboardState?.source_mode || "unknown");
-    renderLiveHealth(payload.refresh);
+    renderLiveHealth(payload.refresh, dashboardState);
 
     if (payload.refresh.status === "idle") {
       if (payload.refresh.last_error) {

@@ -27,7 +27,7 @@ REGION_COORDINATES: dict[str, tuple[float, float]] = {
 }
 
 
-@dataclass(slots=True)
+@dataclass
 class TinyFishAPIClient:
     """
     TinyFish-backed issue extraction with a local heuristic fallback.
@@ -287,6 +287,7 @@ class IssueExtractionAgent:
                 IssueRecord(
                     issue_id=f"{batch_id}-ISSUE-{index:03d}",
                     source_url=source.url,
+                    source_publisher=source.publisher,
                     title=source.title,
                     region=region,
                     latitude=latitude,

@@ -8,7 +8,7 @@ from agents.shared.models import SourceBatch, SourceRecord
 from agents.shared.tinyfish import TinyFishAPIError, TinyFishWebAgentClient
 
 
-@dataclass(slots=True)
+@dataclass
 class SourceSeed:
     url: str
     publisher: str
@@ -16,7 +16,7 @@ class SourceSeed:
     goal: str
 
 
-@dataclass(slots=True)
+@dataclass
 class SourceDiscoveryConfig:
     allowed_domains: set[str] = field(
         default_factory=lambda: {
@@ -252,8 +252,9 @@ class SourceDiscoveryAgent:
         candidates: list[dict[str, str]] | None = None,
     ) -> SourceBatch:
         source_mode = "seeded_input"
+        live_errors: list[str] = []
         if candidates is None:
-            candidates, source_mode = self._collect_live_candidates()
+            candidates, source_mode, live_errors = self._collect_live_candidates()
 
         valid_sources: list[SourceRecord] = []
         rejected_count = 0
@@ -292,24 +293,29 @@ class SourceDiscoveryAgent:
                 "candidate_count": len(candidates),
                 "accepted_count": len(valid_sources),
                 "rejected_count": rejected_count,
+                "live_errors": live_errors[:5],
             },
             sources=sorted(valid_sources, key=lambda source: source.score, reverse=True),
         )
 
-    def _collect_live_candidates(self) -> tuple[list[dict[str, str]], str]:
+    def _collect_live_candidates(self) -> tuple[list[dict[str, str]], str, list[str]]:
         max_seed_attempts = max(
             1,
             int(os.getenv("TINYFISH_MAX_SOURCE_SEEDS", str(self.config.max_live_seed_attempts))),
         )
+        live_errors: list[str] = []
         if self.tinyfish_client.is_configured:
             collected = self._collect_live_candidates_async(
                 self.config.source_seeds[:max_seed_attempts]
             )
 
             if collected:
-                return collected, "tinyfish_web"
+                return collected, "tinyfish_web", live_errors
 
-        return self._fallback_candidates(), "fallback_demo"
+        if not self.tinyfish_client.is_configured:
+            live_errors.append("TinyFish source discovery skipped because TINYFISH_API_KEY is not configured.")
+
+        return self._fallback_candidates(), "fallback_demo", live_errors
 
     def _collect_live_candidates_async(
         self,
@@ -403,7 +409,9 @@ class SourceDiscoveryAgent:
             return False
 
         parsed = urlparse(url)
-        domain = parsed.netloc.removeprefix("www.")
+        domain = parsed.netloc
+        if domain.startswith("www."):
+            domain = domain[4:]
         if domain not in self.config.allowed_domains:
             return False
 

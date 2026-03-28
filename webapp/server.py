@@ -32,7 +32,7 @@ def load_dashboard_payload(force_refresh: bool = False) -> dict[str, object]:
     return json.loads(latest_path.read_text(encoding="utf-8"))
 
 
-@dataclass(slots=True)
+@dataclass
 class RefreshState:
     status: str = "idle"
     last_started_at: str | None = None
@@ -47,7 +47,7 @@ class RefreshState:
     auto_refresh_interval_seconds: int = 3600
 
 
-@dataclass(slots=True)
+@dataclass
 class DashboardRuntime:
     payload: dict[str, object] | None = None
     refresh: RefreshState = field(default_factory=RefreshState)
@@ -77,6 +77,9 @@ class DashboardRuntime:
     def get_payload(self) -> dict[str, object]:
         with self.lock:
             if self.payload is None:
+                self.payload = load_dashboard_payload(force_refresh=False)
+                self.refresh.last_source_mode = str(self.payload.get("source_mode", "unknown"))
+            elif self.refresh.status != "refreshing":
                 self.payload = load_dashboard_payload(force_refresh=False)
                 self.refresh.last_source_mode = str(self.payload.get("source_mode", "unknown"))
             payload = dict(self.payload)
@@ -177,6 +180,9 @@ def summarize_live_success(payload: dict[str, object]) -> str:
 def summarize_live_error(payload: dict[str, object]) -> str | None:
     source_metadata = payload.get("source_batch", {}).get("metadata", {})
     issue_metadata = payload.get("issue_batch", {}).get("metadata", {})
+    source_errors = source_metadata.get("live_errors") or []
+    if source_errors:
+        return str(source_errors[0])
     issue_errors = issue_metadata.get("live_errors") or []
     if issue_errors:
         return str(issue_errors[0])

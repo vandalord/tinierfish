@@ -65,6 +65,7 @@ class MapVisualizationAgent:
                     "properties": {
                         "issue_id": issue.issue_id,
                         "title": issue.title,
+                        "source_publisher": issue.source_publisher,
                         "source_url": issue.source_url,
                         "region": issue.region,
                         "severity": issue.extraction.severity.value,

@@ -1,4 +1,4 @@
-# cookedtinyfish
+# tinierfish
 
 TinyFish AI 2026
 

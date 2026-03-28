@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import ssl
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
@@ -19,7 +20,7 @@ class TinyFishAPIError(RuntimeError):
     """Raised when the TinyFish API returns an error or an invalid payload."""
 
 
-@dataclass(slots=True)
+@dataclass
 class TinyFishWebAgentClient:
     """
     Minimal TinyFish Web Agent client using the documented synchronous endpoint.
@@ -42,6 +43,14 @@ class TinyFishWebAgentClient:
 
     def __post_init__(self) -> None:
         self.api_key = self.api_key or os.getenv("TINYFISH_API_KEY")
+        self.verify_ssl = self._read_verify_ssl_flag()
+        self.ca_bundle_path = (
+            self.ca_bundle_path
+            or os.getenv("TINYFISH_CA_BUNDLE")
+            or os.getenv("SSL_CERT_FILE")
+            or os.getenv("REQUESTS_CA_BUNDLE")
+        )
+        self.allow_insecure_fallback = self._read_allow_insecure_fallback_flag()
 
     @property
     def is_configured(self) -> bool:
