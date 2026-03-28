@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TinyFish Supply Chain Watch</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="page-shell">
+      <section class="hero">
+        <div>
+          <p class="eyebrow">Singapore Food Resilience</p>
+          <h1>Live Supply Chain Watchtower</h1>
+          <p class="hero-copy">
+            Monitor upstream disruptions, inspect affected products, and compare fallback suppliers before shortages land in Singapore.
+          </p>
+        </div>
+        <div class="hero-actions">
+          <div class="hero-badges">
+            <span id="source-badge" class="status-badge unknown">Source unknown</span>
+            <span id="refresh-badge" class="status-badge idle">Idle</span>
+          </div>
+          <button id="refresh-button" class="primary-button" type="button">Refresh Data</button>
+          <p id="status-text" class="status-text">Loading latest batch...</p>
+        </div>
+      </section>
+
+      <section class="summary-grid">
+        <article class="metric-card">
+          <span class="metric-label">Tracked issues</span>
+          <strong id="metric-issues" class="metric-value">0</strong>
+        </article>
+        <article class="metric-card">
+          <span class="metric-label">Recommendations</span>
+          <strong id="metric-recommendations" class="metric-value">0</strong>
+        </article>
+        <article class="metric-card">
+          <span class="metric-label">Critical alerts</span>
+          <strong id="metric-critical" class="metric-value">0</strong>
+        </article>
+        <article class="metric-card">
+          <span class="metric-label">Sources ingested</span>
+          <strong id="metric-sources" class="metric-value">0</strong>
+        </article>
+      </section>
+
+      <section class="content-grid">
+        <div class="map-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="panel-kicker">Regional view</p>
+              <h2>Disruptions around Singapore</h2>
+            </div>
+            <p class="panel-note">Click a pulse to inspect the issue and fallback suppliers.</p>
+          </div>
+          <div id="map-surface" class="map-surface">
+            <svg id="map-svg" viewBox="0 0 1000 640" preserveAspectRatio="xMidYMid meet"></svg>
+          </div>
+        </div>
+
+        <div class="detail-column">
+          <article class="detail-card">
+            <p class="panel-kicker">Selected issue</p>
+            <div id="selection-panel">
+              <h2 class="detail-title">No disruption selected</h2>
+              <p class="detail-copy">Choose a pulse on the map or a card below to inspect affected goods and alternatives.</p>
+            </div>
+          </article>
+
+          <article class="detail-card">
+            <p class="panel-kicker">Batch timeline</p>
+            <div id="timeline-panel" class="timeline-panel"></div>
+          </article>
+
+          <article class="detail-card">
+            <p class="panel-kicker">Live run health</p>
+            <div id="live-health-panel" class="timeline-panel"></div>
+          </article>
+        </div>
+      </section>
+
+      <section>
+        <div class="issues-header">
+          <div>
+            <p class="panel-kicker">Issue queue</p>
+            <h2>Latest disruptions</h2>
+          </div>
+        </div>
+        <div id="issues-list" class="issues-list"></div>
+      </section>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>
