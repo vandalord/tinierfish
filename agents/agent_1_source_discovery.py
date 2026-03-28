@@ -22,8 +22,16 @@ class SourceDiscoveryConfig:
         default_factory=lambda: {
             "reuters.com",
             "bloomberg.com",
+            "nikkei.com",
             "straitstimes.com",
             "channelnewsasia.com",
+            "scmp.com",
+            "theloadstar.com",
+            "freightwaves.com",
+            "gcaptain.com",
+            "bangkokpost.com",
+            "reliefweb.int",
+            "fao.org",
             "maritime-executive.com",
             "lloydslist.com",
             "seatrade-maritime.com",
@@ -46,9 +54,14 @@ class SourceDiscoveryConfig:
         "shipping",
         "port",
         "freight",
+        "transport",
+        "cargo",
         "food security",
         "produce",
         "vegetable",
+        "grain",
+        "container",
+        "cold chain",
         "import",
         "export",
         "strike",
@@ -56,9 +69,14 @@ class SourceDiscoveryConfig:
         "drought",
     )
     batch_frequency: str = "hourly"
+<<<<<<< HEAD
     max_articles_per_source: int = 1
     max_total_live_articles: int = 1
     max_live_seed_attempts: int = 1
+=======
+    max_articles_per_source: int = 4
+    max_live_seed_attempts: int = 8
+>>>>>>> f82097e878af2ba4c3a5e6f5998b22a20b02c73a
     source_seeds: tuple[SourceSeed, ...] = (
         SourceSeed(
             url="https://www.channelnewsasia.com/asia",
@@ -86,6 +104,37 @@ class SourceDiscoveryConfig:
             ),
         ),
         SourceSeed(
+            url="https://www.straitstimes.com/asia",
+            publisher="The Straits Times",
+            region="Asia",
+            goal=(
+                "Extract up to 5 recent article links from this page about food imports, "
+                "shipping delays, logistics disruptions, agricultural weather damage, "
+                "trade bottlenecks, or supply risk relevant to Singapore or Southeast Asia. "
+                'Respond only as JSON with {"articles":[{"url":"","title":"","summary":"","region":""}]}.'
+            ),
+        ),
+        SourceSeed(
+            url="https://www.scmp.com/topics/supply-chain",
+            publisher="South China Morning Post",
+            region="Asia",
+            goal=(
+                "Extract up to 5 recent article links from this topic page about supply chain disruption, "
+                "shipping delays, logistics bottlenecks, energy transport, or import risks relevant to Asia. "
+                'Respond only as JSON with {"articles":[{"url":"","title":"","summary":"","region":""}]}.'
+            ),
+        ),
+        SourceSeed(
+            url="https://asia.nikkei.com/Economy",
+            publisher="Nikkei Asia",
+            region="Asia",
+            goal=(
+                "Extract up to 5 recent article links from this page about Asian trade, logistics, food imports, "
+                "shipping, manufacturing disruption, or supply chain risk relevant to Singapore and Southeast Asia. "
+                'Respond only as JSON with {"articles":[{"url":"","title":"","summary":"","region":""}]}.'
+            ),
+        ),
+        SourceSeed(
             url="https://www.maritime-executive.com/",
             publisher="The Maritime Executive",
             region="Global",
@@ -107,6 +156,87 @@ class SourceDiscoveryConfig:
                 "Asia. Respond only as JSON with "
                 '{"articles":[{"url":"","title":"","summary":"","region":""}]}. '
                 "Only include direct live article pages."
+            ),
+        ),
+        SourceSeed(
+            url="https://splash247.com/",
+            publisher="Splash247",
+            region="Global",
+            goal=(
+                "Extract up to 5 recent article links from this page about shipping disruption, "
+                "port congestion, rerouting, vessel delay, or freight risk relevant to Asia. "
+                'Respond only as JSON with {"articles":[{"url":"","title":"","summary":"","region":""}]}.'
+            ),
+        ),
+        SourceSeed(
+            url="https://theloadstar.com/",
+            publisher="The Loadstar",
+            region="Global",
+            goal=(
+                "Extract up to 5 recent article links from this page about air cargo, ocean freight, "
+                "container disruption, port operations, or supply-chain bottlenecks affecting Asia. "
+                'Respond only as JSON with {"articles":[{"url":"","title":"","summary":"","region":""}]}.'
+            ),
+        ),
+        SourceSeed(
+            url="https://www.freightwaves.com/",
+            publisher="FreightWaves",
+            region="Global",
+            goal=(
+                "Extract up to 5 recent article links from this page about freight markets, "
+                "shipping disruption, logistics bottlenecks, container shortages, or supply chain risk "
+                "relevant to food and consumer imports in Asia. Respond only as JSON with "
+                '{"articles":[{"url":"","title":"","summary":"","region":""}]}.'
+            ),
+        ),
+        SourceSeed(
+            url="https://gcaptain.com/",
+            publisher="gCaptain",
+            region="Global",
+            goal=(
+                "Extract up to 5 recent article links from this page about maritime incidents, port closures, "
+                "groundings, cargo disruption, or shipping routes affecting Asia. Respond only as JSON with "
+                '{"articles":[{"url":"","title":"","summary":"","region":""}]}.'
+            ),
+        ),
+        SourceSeed(
+            url="https://www.fao.org/newsroom/en/",
+            publisher="FAO Newsroom",
+            region="Global",
+            goal=(
+                "Extract up to 5 recent article links from this page about food price spikes, cereal markets, "
+                "agricultural weather shocks, food insecurity, or import-related food supply issues relevant to Asia. "
+                'Respond only as JSON with {"articles":[{"url":"","title":"","summary":"","region":""}]}.'
+            ),
+        ),
+        SourceSeed(
+            url="https://www.fao.org/giews/en/",
+            publisher="FAO GIEWS",
+            region="Global",
+            goal=(
+                "Extract up to 5 recent alert or report links from this page about crop failures, drought, floods, "
+                "food supply warnings, or import pressure that could affect regional sourcing into Singapore. "
+                'Respond only as JSON with {"articles":[{"url":"","title":"","summary":"","region":""}]}.'
+            ),
+        ),
+        SourceSeed(
+            url="https://www.fao.org/giews/food-prices/home/en/",
+            publisher="FAO FPMA",
+            region="Global",
+            goal=(
+                "Extract up to 5 recent links from this page about food price monitoring, staple price spikes, "
+                "market stress, or commodity supply warnings relevant to Asia. Respond only as JSON with "
+                '{"articles":[{"url":"","title":"","summary":"","region":""}]}.'
+            ),
+        ),
+        SourceSeed(
+            url="https://reliefweb.int/updates?view=reports",
+            publisher="ReliefWeb",
+            region="Global",
+            goal=(
+                "Extract up to 5 recent report links from this page about floods, drought, storms, conflict, "
+                "or food security emergencies in Asia or nearby sourcing regions that could disrupt imports into Singapore. "
+                'Respond only as JSON with {"articles":[{"url":"","title":"","summary":"","region":""}]}.'
             ),
         ),
     )
@@ -185,6 +315,7 @@ class SourceDiscoveryAgent:
         )
         live_errors: list[str] = []
         if self.tinyfish_client.is_configured:
+<<<<<<< HEAD
             collected: list[dict[str, str]] = []
             seen_urls: set[str] = set()
             for seed in self.config.source_seeds[:max_seed_attempts]:
@@ -203,6 +334,11 @@ class SourceDiscoveryAgent:
                         break
                 if len(collected) >= self.config.max_total_live_articles:
                     break
+=======
+            collected = self._collect_live_candidates_async(
+                self.config.source_seeds[:max_seed_attempts]
+            )
+>>>>>>> f82097e878af2ba4c3a5e6f5998b22a20b02c73a
 
             if collected:
                 return collected, "tinyfish_web", live_errors
@@ -211,6 +347,28 @@ class SourceDiscoveryAgent:
             live_errors.append("TinyFish source discovery skipped because TINYFISH_API_KEY is not configured.")
 
         return self._fallback_candidates(), "fallback_demo", live_errors
+
+    def _collect_live_candidates_async(
+        self,
+        seeds: tuple[SourceSeed, ...] | list[SourceSeed],
+    ) -> list[dict[str, str]]:
+        tasks = [{"url": seed.url, "goal": seed.goal} for seed in seeds]
+        if not tasks:
+            return []
+
+        try:
+            responses = self.tinyfish_client.run_many_concurrent(tasks)
+        except TinyFishAPIError:
+            return []
+
+        collected: list[dict[str, str]] = []
+        for seed, response in zip(seeds, responses):
+            result = response.get("result") or response.get("resultJson")
+            if response.get("status") != "COMPLETED" or not isinstance(result, dict):
+                continue
+            collected.extend(self._normalize_tinyfish_articles(seed, result))
+
+        return collected
 
     def _normalize_tinyfish_articles(
         self,

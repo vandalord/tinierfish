@@ -70,6 +70,7 @@ class MapVisualizationAgent:
                         "region": issue.region,
                         "severity": issue.extraction.severity.value,
                         "risk_type": issue.extraction.risk_type.value,
+                        "narrative": issue.extraction.narrative,
                         "products": issue.extraction.affected_products,
                         "negative_signals": issue.extraction.negative_signals,
                         "recommendations": popup_recommendations,

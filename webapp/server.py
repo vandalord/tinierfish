@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import urlparse
 
 from agents.pipeline_service import run_demo_pipeline
 
@@ -27,6 +27,7 @@ def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+<<<<<<< HEAD
 def append_refresh_log(message: str) -> None:
     OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
     with REFRESH_LOG_PATH.open("a", encoding="utf-8") as handle:
@@ -34,10 +35,99 @@ def append_refresh_log(message: str) -> None:
 
 
 def load_dashboard_payload(force_refresh: bool = False) -> dict[str, object]:
+=======
+def read_cached_dashboard_payload() -> dict[str, object] | None:
+>>>>>>> f82097e878af2ba4c3a5e6f5998b22a20b02c73a
     latest_path = OUTPUTS_DIR / "latest_dashboard.json"
-    if force_refresh or not latest_path.exists():
-        return run_demo_pipeline(output_dir=str(OUTPUTS_DIR), write_files=True)
+    if not latest_path.exists():
+        return None
     return json.loads(latest_path.read_text(encoding="utf-8"))
+
+
+def run_dashboard_refresh() -> dict[str, object]:
+    return run_demo_pipeline(output_dir=str(OUTPUTS_DIR), write_files=True)
+
+
+def build_empty_payload() -> dict[str, object]:
+    now = utc_now_iso()
+    return {
+        "batch_root": None,
+        "generated_at": None,
+        "source_mode": "awaiting_initial_scrape",
+        "source_batch": {
+            "batch_id": None,
+            "created_at": now,
+            "metadata": {"accepted_count": 0, "candidate_count": 0, "rejected_count": 0},
+            "sources": [],
+        },
+        "issue_batch": {
+            "batch_id": None,
+            "created_at": now,
+            "metadata": {"live_issue_count": 0},
+            "issues": [],
+        },
+        "recommendation_batch": {
+            "batch_id": None,
+            "created_at": now,
+            "metadata": {},
+            "recommendations": [],
+        },
+        "visualization_batch": {
+            "batch_id": None,
+            "created_at": now,
+            "html_path": None,
+            "geojson_path": None,
+            "geojson": {
+                "type": "FeatureCollection",
+                "features": [],
+            },
+        },
+    }
+
+
+def parse_iso_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        normalized = value.replace("Z", "+00:00")
+        return datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+
+
+def payload_age_seconds(payload: dict[str, object] | None) -> float | None:
+    if not payload:
+        return None
+    generated_at = parse_iso_datetime(str(payload.get("generated_at") or ""))
+    if generated_at is None:
+        return None
+    return max(0.0, (datetime.now(timezone.utc) - generated_at).total_seconds())
+
+
+def next_refresh_due_at(payload: dict[str, object] | None, interval_seconds: int) -> float | None:
+    age = payload_age_seconds(payload)
+    if age is None:
+        return None
+    generated_at = parse_iso_datetime(str(payload.get("generated_at") or ""))
+    if generated_at is None:
+        return None
+    return (generated_at.timestamp() + interval_seconds)
+
+
+def format_due_at_iso(payload: dict[str, object] | None, interval_seconds: int) -> str | None:
+    due_epoch = next_refresh_due_at(payload, interval_seconds)
+    if due_epoch is None:
+        return None
+    return datetime.fromtimestamp(due_epoch, tz=timezone.utc).isoformat()
+
+
+def should_refresh_payload(payload: dict[str, object] | None, interval_seconds: int) -> bool:
+    if payload is None:
+        return True
+    age = payload_age_seconds(payload)
+    if age is None:
+        return True
+    return age >= interval_seconds
 
 
 @dataclass
@@ -76,6 +166,7 @@ class DashboardRuntime:
                 "last_live_error": self.refresh.last_live_error,
                 "run_count": self.refresh.run_count,
                 "auto_refresh_interval_seconds": self.refresh.auto_refresh_interval_seconds,
+                "next_refresh_due_at": format_due_at_iso(self.payload, self.refresh.auto_refresh_interval_seconds),
             }
             return {
                 "has_payload": self.payload is not None,
@@ -83,14 +174,9 @@ class DashboardRuntime:
             }
 
     def get_payload(self) -> dict[str, object]:
+        self.reload_cached_payload()
         with self.lock:
-            if self.payload is None:
-                self.payload = load_dashboard_payload(force_refresh=False)
-                self.refresh.last_source_mode = str(self.payload.get("source_mode", "unknown"))
-            elif self.refresh.status != "refreshing":
-                self.payload = load_dashboard_payload(force_refresh=False)
-                self.refresh.last_source_mode = str(self.payload.get("source_mode", "unknown"))
-            payload = dict(self.payload)
+            payload = dict(self.payload or build_empty_payload())
             payload["runtime"] = {
                 "status": self.refresh.status,
                 "last_started_at": self.refresh.last_started_at,
@@ -103,8 +189,18 @@ class DashboardRuntime:
                 "last_live_error": self.refresh.last_live_error,
                 "run_count": self.refresh.run_count,
                 "auto_refresh_interval_seconds": self.refresh.auto_refresh_interval_seconds,
+                "next_refresh_due_at": format_due_at_iso(self.payload, self.refresh.auto_refresh_interval_seconds),
             }
             return payload
+
+    def reload_cached_payload(self) -> None:
+        cached_payload = read_cached_dashboard_payload()
+        if cached_payload is None:
+            return
+        with self.lock:
+            if self.refresh.status == "refreshing":
+                return
+            self._apply_payload_locked(cached_payload, increment_run_count=False)
 
     def queue_refresh(self, reason: str = "manual") -> dict[str, object]:
         with self.lock:
@@ -138,7 +234,7 @@ class DashboardRuntime:
     def _run_refresh(self, reason: str) -> None:
         append_refresh_log(f"refresh started: reason={reason}")
         try:
-            payload = load_dashboard_payload(force_refresh=True)
+            payload = run_dashboard_refresh()
         except Exception as exc:  # noqa: BLE001
             append_refresh_log(f"refresh failed: {exc}")
             append_refresh_log(traceback.format_exc().rstrip())
@@ -149,19 +245,24 @@ class DashboardRuntime:
             return
 
         with self.lock:
-            self.payload = payload
-            self.refresh.status = "idle"
-            self.refresh.last_completed_at = utc_now_iso()
-            self.refresh.last_source_mode = str(payload.get("source_mode", "unknown"))
-            self.refresh.last_error = None
-            live_error = summarize_live_error(payload)
-            if self.refresh.last_source_mode == "tinyfish_web":
-                self.refresh.last_live_success_at = self.refresh.last_completed_at
-                self.refresh.last_live_success_summary = summarize_live_success(payload)
-                self.refresh.last_live_error = None
-            elif live_error:
-                self.refresh.last_live_error_at = self.refresh.last_completed_at
-                self.refresh.last_live_error = live_error
+            self._apply_payload_locked(payload, increment_run_count=True)
+
+    def _apply_payload_locked(self, payload: dict[str, object], increment_run_count: bool) -> None:
+        generated_at = str(payload.get("generated_at") or utc_now_iso())
+        self.payload = payload
+        self.refresh.status = "idle"
+        self.refresh.last_completed_at = generated_at
+        self.refresh.last_source_mode = str(payload.get("source_mode", "unknown"))
+        self.refresh.last_error = None
+        live_error = summarize_live_error(payload)
+        if self.refresh.last_source_mode == "tinyfish_web":
+            self.refresh.last_live_success_at = generated_at
+            self.refresh.last_live_success_summary = summarize_live_success(payload)
+            self.refresh.last_live_error = None
+        elif live_error:
+            self.refresh.last_live_error_at = generated_at
+            self.refresh.last_live_error = live_error
+        if increment_run_count:
             self.refresh.run_count += 1
         append_refresh_log(
             "refresh completed: "
@@ -170,21 +271,22 @@ class DashboardRuntime:
             f"recommendations={payload.get('recommendation_batch', {}).get('metadata', {}).get('recommendation_count')}"
         )
 
-    def ensure_seed_payload(self) -> None:
-        with self.lock:
-            if self.payload is not None:
-                return
-        try:
-            payload = load_dashboard_payload(force_refresh=False)
-        except Exception as exc:  # noqa: BLE001
-            with self.lock:
-                self.refresh.status = "error"
-                self.refresh.last_error = str(exc)
-                self.refresh.last_completed_at = utc_now_iso()
+    def initialize_from_cache(self) -> None:
+        cached_payload = read_cached_dashboard_payload()
+        if cached_payload is None:
             return
         with self.lock:
-            self.payload = payload
-            self.refresh.last_source_mode = str(payload.get("source_mode", "unknown"))
+            self._apply_payload_locked(cached_payload, increment_run_count=False)
+
+    def ensure_hourly_refresh(self) -> None:
+        with self.lock:
+            should_queue = self.refresh.status != "refreshing" and should_refresh_payload(
+                self.payload,
+                self.refresh.auto_refresh_interval_seconds,
+            )
+        if should_queue:
+            reason = "initial_scrape" if self.payload is None else "scheduled_refresh"
+            self.queue_refresh(reason=reason)
 
 
 def summarize_live_success(payload: dict[str, object]) -> str:
@@ -218,7 +320,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
         path = parsed.path
-        query = parse_qs(parsed.query)
 
         if path == "/":
             self._serve_file(STATIC_DIR / "index.html", "text/html; charset=utf-8")
@@ -242,9 +343,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/dashboard":
-            if "refresh" in query:
-                self._send_json(RUNTIME.queue_refresh(reason="query_refresh"))
-                return
+            RUNTIME.ensure_hourly_refresh()
             self._send_json(RUNTIME.get_payload())
             return
 
@@ -263,13 +362,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._serve_file(file_path, content_type)
                 return
 
-        self.send_error(HTTPStatus.NOT_FOUND, "Not found")
-
-    def do_POST(self) -> None:
-        parsed = urlparse(self.path)
-        if parsed.path == "/api/refresh":
-            self._send_json(RUNTIME.queue_refresh(reason="button_refresh"), status=HTTPStatus.ACCEPTED)
-            return
         self.send_error(HTTPStatus.NOT_FOUND, "Not found")
 
     def log_message(self, format: str, *args: object) -> None:
@@ -303,8 +395,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
 def auto_refresh_loop(interval_seconds: int) -> None:
     while True:
-        time.sleep(interval_seconds)
-        RUNTIME.queue_refresh(reason="scheduled_refresh")
+        time.sleep(min(interval_seconds, 30))
+        RUNTIME.reload_cached_payload()
+        RUNTIME.ensure_hourly_refresh()
 
 
 def main() -> None:
@@ -320,7 +413,8 @@ def main() -> None:
 
     OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
     RUNTIME.refresh.auto_refresh_interval_seconds = args.auto_refresh_interval
-    RUNTIME.ensure_seed_payload()
+    RUNTIME.initialize_from_cache()
+    RUNTIME.ensure_hourly_refresh()
     threading.Thread(
         target=auto_refresh_loop,
         args=(args.auto_refresh_interval,),

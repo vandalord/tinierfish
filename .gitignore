@@ -209,3 +209,4 @@ __marimo__/
 
 #Data Ouputs
 outputs/
+.DS_Store
