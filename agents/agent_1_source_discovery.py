@@ -330,12 +330,14 @@ class SourceDiscoveryAgent:
                     break
 
             if collected:
-                return collected, "tinyfish_web", live_errors
+                supplemented = self._supplement_candidates(collected)
+                return supplemented, "tinyfish_web", live_errors
 
         if not self.tinyfish_client.is_configured:
             live_errors.append("TinyFish source discovery skipped because TINYFISH_API_KEY is not configured.")
 
-        return self._fallback_candidates(), "fallback_demo", live_errors
+        fallback_only = self._fallback_candidates()[: self.config.max_total_live_articles]
+        return fallback_only, "fallback_demo", live_errors
 
     def _normalize_tinyfish_articles(
         self,
@@ -397,7 +399,43 @@ class SourceDiscoveryAgent:
                 "region": "Australia",
                 "discovery_mode": "fallback",
             },
+            {
+                "url": "https://www.freightwaves.com/news/red-sea-disruptions-push-asia-europe-shipping-costs-higher",
+                "title": "Red Sea disruptions push Asia-Europe shipping costs higher",
+                "publisher": "FreightWaves",
+                "summary": "Container rerouting and longer sailing times are driving higher freight costs and planning uncertainty for Asian importers.",
+                "region": "Global",
+                "discovery_mode": "fallback",
+            },
+            {
+                "url": "https://www.fao.org/newsroom/detail/asia-food-prices-climate-pressure-supply-risks/en",
+                "title": "Climate pressure raises food supply risks and prices across Asia",
+                "publisher": "FAO Newsroom",
+                "summary": "Weather shocks and agricultural stress are increasing food price pressure and import risk across several Asian markets.",
+                "region": "Asia",
+                "discovery_mode": "fallback",
+            },
         ]
+
+    def _supplement_candidates(
+        self,
+        candidates: list[dict[str, str]],
+    ) -> list[dict[str, str]]:
+        if len(candidates) >= self.config.max_total_live_articles:
+            return candidates[: self.config.max_total_live_articles]
+
+        supplemented = list(candidates)
+        seen_urls = {candidate["url"] for candidate in candidates}
+
+        for fallback in self._fallback_candidates():
+            if fallback["url"] in seen_urls:
+                continue
+            supplemented.append(fallback)
+            seen_urls.add(fallback["url"])
+            if len(supplemented) >= self.config.max_total_live_articles:
+                break
+
+        return supplemented[: self.config.max_total_live_articles]
 
     def _is_valid_candidate(self, candidate: dict[str, str]) -> bool:
         url = candidate.get("url", "").strip()
